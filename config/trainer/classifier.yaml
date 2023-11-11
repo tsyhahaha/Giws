@@ -1,0 +1,21 @@
+
+mode: classifier
+
+# train
+train_batch_size: 256 
+accumulate-step: 4 
+train_data_folder: /root/autodl-tmp/DataSet/train 
+epochs: 1000 
+
+# optimizer
+learning_rate: 1e-3 
+
+# output
+output-dir: /root/autodl-tmp/GTClassifier/output 
+save-step: 500 
+
+# eval
+eval: True
+eval-step: 100 
+test_data_folder: /root/autodl-tmp/DataSet/test 
+test_batch_size: 128 
