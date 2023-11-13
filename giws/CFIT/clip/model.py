@@ -16,8 +16,8 @@ if importlib.util.find_spec('flash_attn'):
     FlashMHA = importlib.import_module('flash_attn.flash_attention').FlashMHA
 
 from clip import _tokenizer
-from configuration_bert import BertConfig
-from modeling_bert import BertModel
+from . import configuration_bert as cfg_bert
+from . import modeling_bert as md_bert
 
 
 class Bottleneck(nn.Module):
@@ -335,7 +335,7 @@ class CLIP(nn.Module):
                 use_flash_attention=use_flash_attention
             )
 
-        self.bert_config = BertConfig(
+        self.bert_config = cfg_bert.BertConfig(
             vocab_size_or_config_json_file=vocab_size,
             hidden_size=text_hidden_size,
             num_hidden_layers=text_num_hidden_layers,
@@ -350,7 +350,7 @@ class CLIP(nn.Module):
             layer_norm_eps=1e-12,
             use_flash_attention=use_flash_attention
         )
-        self.bert = BertModel(self.bert_config)
+        self.bert = md_bert.BertModel(self.bert_config)
 
         self.text_projection = nn.Parameter(torch.empty(text_hidden_size, embed_dim))
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
@@ -411,8 +411,14 @@ class CLIP(nn.Module):
 
         image_features = image_features / image_features.norm(dim=-1, keepdim=True)
         text_features = text_features / text_features.norm(dim=-1, keepdim=True)
+        """
+        # cosine similarity as logits
+        logit_scale = self.logit_scale.exp()
+        logits_per_image = logit_scale * image_features @ text_features.t()
+        logits_per_text = logits_per_image.t()
+        """
 
-        return image_features, text_features, self.logit_scale.exp()
+        return image_features, text_features
 
     def get_similarity(self, image, text):
         image_features = self.encode_image(image)
@@ -453,7 +459,7 @@ def convert_weights(model: nn.Module):
                 if tensor is not None:
                     tensor.data = tensor.data.half()
 
-        if isinstance(l, BertModel):
+        if isinstance(l, md_bert.BertModel):
             l.to(torch.half)
 
         for name in ["text_projection", "proj"]:
@@ -487,7 +493,7 @@ def restore_model(model, clip_state_dict: dict, bert_state_dict: dict, use_flash
     convert_weights(model)
     resize_pos_embed(merged_state_dict, model)
     model.load_state_dict(merged_state_dict, strict=False)
-    return model.eval()
+    return model
 
 
 def convert_state_dict(state_dict):

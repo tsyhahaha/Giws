@@ -6,12 +6,12 @@ import argparse
 import torch
 from torch.utils.data import DataLoader
 
-import utils
+from model import utils
 from model.model import TwitterClassifier
 from model.dataset import GTDataset
 
 device = 'cuda' if torch.cuda.is_available() else 'cpu'
-clip_model, processer = utils.get_clip(device)
+clip_model, processer = utils.get_clip(device=device)
 
 
 def parse():
@@ -58,9 +58,7 @@ def eval(model_or_path, test_data_folder, test_batch_size, result_file=None, dat
         return eq_num / prds_ids.numel()
 
     for it, (image, text, label) in enumerate(dataloader):
-        image_features, text_features = utils.get_features(clip_model, image.to(device), text.to(device))
-        input_ids = torch.hstack((image_features, text_features)).to(torch.float32)
-        output = model(input_ids)
+        output = model(image.to(device), text.to(device))
         acc = accuracy(output, label.to(device))
         print(f'Batch [{it+1}/{all_batch_length}] Accuracy: {round(acc, 4)}')
         accs.append(acc)

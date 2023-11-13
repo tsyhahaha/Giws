@@ -3,9 +3,13 @@ import torch.nn as nn
 import torch.optim as optim
 from torch.utils.data import DataLoader
 
+import pdb
 import os
 import time
-import utils
+import copy
+import random
+from .model import utils
+from .model import hook
 import argparse
 import logging
 
@@ -70,18 +74,26 @@ def setup(args):
     args.device = device
 
 def setup_model(args):
-    model = TwitterClassifier().to(args.device)
+    model = TwitterClassifier(input_size=args.input_size).to(args.device)
     logging.info('Model setup finish')
     return model
 
-def setup_dataset(args):
+def setup_dataset(args, processer):
     img_folder, text_folder, label_folder = tuple([os.path.join(args.train_data_folder, i) for i in ['img', 'text', 'label']])
-    dataset = GTDataset(img_folder, text_folder, label_folder, args.processer)
-    train_dataloader = DataLoader(dataset, batch_size=args.train_batch_size, shuffle=True, num_workers=0, pin_memory=True)
+    train_dataset = GTDataset(img_folder, text_folder, label_folder, processer)
+    train_dataloader = DataLoader(train_dataset, batch_size=args.train_batch_size, shuffle=True, num_workers=0, pin_memory=True)
     if args.eval:
         img_folder, text_folder, label_folder = tuple([os.path.join(args.test_data_folder, i) for i in ['img', 'text', 'label']])
-        dataset = GTDataset(img_folder, text_folder, label_folder, args.processer)
-        test_dataloader = DataLoader(dataset, batch_size=args.test_batch_size, shuffle=True, num_workers=0, pin_memory=True)
+        test_dataset = GTDataset(img_folder, text_folder, label_folder, processer)
+        
+        # shuffle to prevent bias
+        split_index = len(train_dataset.data)
+        all_data = copy.deepcopy(train_dataset.data) + copy.deepcopy(test_dataset.data)
+        random.shuffle(all_data)
+        train_dataset.data = all_data[:split_index]
+        test_dataset.data = all_data[split_index:]
+
+        test_dataloader = DataLoader(test_dataset, batch_size=args.test_batch_size, shuffle=True, num_workers=0, pin_memory=True)
     else:
         test_dataloader = None
     logging.info('Dataloader setup finish')
@@ -89,19 +101,20 @@ def setup_dataset(args):
 
 def train(args):
     model = setup_model(args)
-    clip_model, preprocess = utils.get_clip(args.device)
-    args.processer = preprocess
-    train_dataloader, test_dataloader = setup_dataset(args)
+    clip_model, preprocess = utils.get_clip(device=args.device)
+    train_dataloader, test_dataloader = setup_dataset(args, preprocess)
 
     # loss and optimizer
     criterion = nn.CrossEntropyLoss()
     optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+    max_grad_norm = args.get('max_grad_norm', 1.0)
     cur_step = 0
-    accumulate_step = args.accumulate_step
     batch_start_time = time.time()
     all_batch_length = len(train_dataloader) // args.accumulate_step
     batch_loss = []
 
+    accumulate_step = args.get('accumulate_step', 4)
+    amp = args.get('amp', False)
 
     def save_checkpoint(iter):
         ckpt_dir = os.path.join(args.output_dir, 'checkpoints')
@@ -118,7 +131,7 @@ def train(args):
 
     # save initial model
     save_checkpoint(0)
-    if args.amp:
+    if amp:
         scaler = torch.cuda.amp.GradScaler()
 
     for epoch in range(args.epochs):
@@ -127,17 +140,15 @@ def train(args):
             it = (batch + 1) % args.accumulate_step
 
             # propagation
-            image_features, text_features = utils.get_features(clip_model, image.to(args.device), text.to(args.device))
-            input_ids = torch.cat((image_features, text_features), dim=1).to(torch.float32)
-            del image, text, image_features, text_features
-            if args.amp:
+            # output = model(image.to(args.device), text.to(args.device))
+            if amp:
                 with torch.cuda.amp.autocast(enabled=False, dtype=torch.float16):
-                    output = model(input_ids)
+                    output = model(image.to(args.device), text.to(args.device))
                     loss = criterion(output, label.to(args.device)) / accumulate_step
                 
                 scaler.scale(loss).backward()
             else:
-                output = model(input_ids)
+                output = model(image.to(args.device), text.to(args.device))
                 loss = criterion(output, label.to(args.device)) / accumulate_step
                 loss.backward()
             batch_loss.append(loss.item())
@@ -145,12 +156,13 @@ def train(args):
             
             # gradient accumulation
             if it == 0:
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
                 jt = (batch + 1) // accumulate_step    # real batch
-                logging.info(f'optim step = {cur_step} loss = {round(sum(batch_loss)/len(batch_loss), 4)}')
+                logging.info(f'optim step = {cur_step+1} loss = {round(sum(batch_loss)/len(batch_loss), 4)}')
                 batch_end_time = time.time()
                 logging.info(f'Epoch [{epoch+1}|{args.epochs}] Batch [{jt}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
 
-                if args.amp:
+                if amp:
                     scaler.step(optimizer)
                     scaler.update()
                 else:
@@ -169,7 +181,8 @@ def train(args):
 
                 batch_start_time = time.time()
                 batch_loss = []
-                
+                # pdb.set_trace()
+    model.gradient_checker.close()
 
 if __name__=='__main__':
     args = parse()
