@@ -1,7 +1,6 @@
 # ignore folder
 **/data/
 **/output/
-**/pretrained/
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
