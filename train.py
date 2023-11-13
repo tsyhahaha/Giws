@@ -1,5 +1,6 @@
 import os
 import logging
+import time
 import resource
 import hydra
 from omegaconf import DictConfig
@@ -27,7 +28,10 @@ def setup(cfg):
     os.makedirs(os.path.abspath(os.path.join(cfg.output_dir, 'checkpoints')), exist_ok=True)
     os.makedirs(os.path.abspath(os.path.join(cfg.output_dir, 'logs')), exist_ok=True)
 
-    log_file = os.path.abspath(os.path.join(cfg.output_dir, 'logs', f'rank{world_rank}.log'))
+    current_timestamp = time.time()
+    local_time = time.localtime(current_timestamp)
+    formatted_time = time.strftime('%m-%d_%H:%M', local_time)
+    log_file = os.path.abspath(os.path.join(cfg.output_dir, 'logs', f'{formatted_time}.log'))
 
     level = logging.DEBUG if cfg.verbose else logging.INFO
     # fmt = f'%(asctime)-15s [%(levelname)s] (%(filename)s:%(lineno)d) Rank {world_rank} | %(message)s'
@@ -58,12 +62,12 @@ def setup(cfg):
     logging.info(f'Arguments: {cfg}')
     logging.info('-----------------')
 
-    logging.info(f'torch.distributed.init_process_group: world_rank={world_rank}, local_rank={local_rank}, world_size=')
+    logging.info(f'torch.distributed.init_process_group: world_rank={world_rank}, local_rank={local_rank}')
 
 def cleanup(cfg):
     torch.distributed.destroy_process_group()
 
-@hydra.main(version_base=None, config_path="config", config_name="train")
+@hydra.main(version_base=None, config_path="config/trainer", config_name="train")
 def main(cfg : DictConfig):
     setup(cfg)
 

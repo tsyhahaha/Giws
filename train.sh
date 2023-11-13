@@ -1,3 +1,4 @@
+export CUDA_VISIBLE_DEVICES=2
 torchrun \
     --nnodes=1 \
     --nproc_per_node=1 \
