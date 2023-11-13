@@ -4,6 +4,7 @@ import json
 import argparse
 
 import torch
+import torch.nn as nn
 from torch.utils.data import DataLoader
 
 from model import utils
@@ -38,7 +39,7 @@ def setup_dataset(test_data_folder, test_batch_size, processer):
     return dataloader
 
 def eval(model_or_path, test_data_folder, test_batch_size, result_file=None, dataloader=None, is_return=False):
-    if isinstance(model_or_path, TwitterClassifier):
+    if isinstance(model_or_path, nn.Module):
         model = model_or_path.to(device)
     elif os.path.exists(model_or_path):
         model = load_model(model_or_path)

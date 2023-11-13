@@ -10,7 +10,7 @@ class TwitterClassifier(nn.Module):
         super(TwitterClassifier, self).__init__()
         self.clip = utils.get_train_clip()
 
-        self.fc = nn.Sequential(
+        self.classifier = nn.Sequential(
             nn.Linear(input_size, 512),
             nn.ReLU(),
             nn.Linear(512, 128),
@@ -18,7 +18,6 @@ class TwitterClassifier(nn.Module):
             nn.Linear(128, output_size)
         )
         self.gradient_checker = hook.GradientChecker(self)
-        print(self)
 
     def forward(self, img, text):
         img_feature, text_feature = self.clip(img, text)
@@ -27,7 +26,7 @@ class TwitterClassifier(nn.Module):
         # input_ids = torch.cat((img_feature, text_feature, sim_score.unsqueeze(1)), dim=1).to(torch.float32)
         
         input_ids = torch.cat((img_feature, text_feature),dim=1).to(torch.float32)
-        return self.fc(input_ids)
+        return self.classifier(input_ids)
 
     def _get_sim(self, img, text):
         with torch.no_grad():

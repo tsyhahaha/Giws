@@ -1,14 +1,16 @@
+defaults:
+ - lora_config: cfit_lora
 
 mode: classifier
 
 device: 0
 
 # model
-input_size: 1024
-clip_path: "/home/taosiyuan/Giws/giws/CFIT/model/pretrained/clip_cn_vit-b-16.pt"
+input_size: 2048
+clip_path: "/home/taosiyuan/Giws/giws/CFIT/model/pretrained/clip_cn_rn50.pt"
 
 # train
-train_batch_size: 64
+train_batch_size: 128
 accumulate_step: 4
 train_data_folder: "/home/taosiyuan/DataSet/train" 
 epochs: 1000 
@@ -28,7 +30,10 @@ save_step: 500
 verbose: False
 
 # eval
-eval: True
+eval: true
 eval_step: 10
 test_data_folder: "/home/taosiyuan/DataSet/test" 
-test_batch_size: 128 
+test_batch_size: 56 
+
+# lora
+apply_lora: true

@@ -13,10 +13,12 @@ from .model import hook
 import argparse
 import logging
 
+from peft import get_peft_config, get_peft_model, LoraConfig
+
 from model.model import TwitterClassifier
 from model.dataset import GTDataset
 from eval_CFIT import eval
-
+""" 
 def parse():
     parser = argparse.ArgumentParser()
     parser.add_argument('--train_batch_size', type=int, default=128)
@@ -33,6 +35,7 @@ def parse():
     parser.add_argument('--amp', action='store_true', help='whether to use auto mixed pricision')
     # parser.add_argument('')
     return parser.parse_args()
+"""
 
 def setup(args):
     os.makedirs(os.path.abspath(os.path.join(args.output_dir, 'checkpoints')), exist_ok=True)
@@ -74,7 +77,22 @@ def setup(args):
     args.device = device
 
 def setup_model(args):
-    model = TwitterClassifier(input_size=args.input_size).to(args.device)
+    if args.apply_lora:
+        model = TwitterClassifier(input_size=args.input_size)
+        lora_config = args.lora_config
+        peft_config = LoraConfig(
+                    r=lora_config.get('lora_r', 4), 
+                    lora_alpha=lora_config.get('lora_alpha', 32),
+                    lora_dropout=lora_config.get('lora_dropout', 0.1),
+                    bias=lora_config.get('lora_bias', 'none'),
+                    target_modules=['query', 'value'],
+                    modules_to_save=['classifier']
+                )
+        model = get_peft_model(model, peft_config)
+        model.print_trainable_parameters()
+        model.to(args.device)
+    else:
+        model = TwitterClassifier(input_size=args.input_size).to(args.device)
     logging.info('Model setup finish')
     return model
 
@@ -142,7 +160,7 @@ def train(args):
             # propagation
             # output = model(image.to(args.device), text.to(args.device))
             if amp:
-                with torch.cuda.amp.autocast(enabled=False, dtype=torch.float16):
+                with torch.cuda.amp.autocast(dtype=torch.float16):
                     output = model(image.to(args.device), text.to(args.device))
                     loss = criterion(output, label.to(args.device)) / accumulate_step
                 
@@ -184,7 +202,5 @@ def train(args):
                 # pdb.set_trace()
     model.gradient_checker.close()
 
-if __name__=='__main__':
-    args = parse()
-    setup(args)
-    train(args)
+
+
