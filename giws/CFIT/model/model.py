@@ -13,9 +13,11 @@ class TwitterClassifier(nn.Module):
         self.classifier = nn.Sequential(
             nn.Linear(input_size, 512),
             nn.ReLU(),
-            nn.Linear(512, 128),
+            nn.Linear(512, 256),
             nn.ReLU(),
-            nn.Linear(128, output_size)
+            nn.Linear(256, 64),
+            nn.ReLU(),
+            nn.Linear(64, output_size)
         )
         self.gradient_checker = hook.GradientChecker(self)
 

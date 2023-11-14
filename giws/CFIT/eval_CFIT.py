@@ -29,6 +29,9 @@ def parse():
 def load_model(model_path):
     model_data = torch.load(model_path)
     model = TwitterClassifier()
+    ####################
+    # lora TBD
+    ####################
     model.load_state_dict(model_data['model'])
     return model.to(device)
 
@@ -50,13 +53,28 @@ def eval(model_or_path, test_data_folder, test_batch_size, result_file=None, dat
     all_batch_length = len(dataloader)
     accs = []
     predictions = []
+    all_labels = []
 
     def accuracy(prds, label):
         prds_ids = torch.argmax(prds, dim=1)
-        predictions.extend(list(prds_ids))
+        predictions.extend(list(map(lambda x: x.item(), prds_ids)))
         label_ids = torch.argmax(label, dim=1)
+        all_labels.extend(list(map(lambda x: x.item(), label_ids)))
         eq_num = (prds_ids == label_ids).sum().item() 
         return eq_num / prds_ids.numel()
+
+    def confusion_matrix(y_true, y_pred, num_classes=None):
+        if num_classes is None:
+            num_classes = max(max(y_true), max(y_pred)) + 1
+
+        # 初始化混淆矩阵
+        conf_matrix = [[0] * num_classes for _ in range(num_classes)]
+
+        # 填充混淆矩阵
+        for true_label, pred_label in zip(y_true, y_pred):
+            conf_matrix[true_label][pred_label] += 1
+
+        return conf_matrix
 
     for it, (image, text, label) in enumerate(dataloader):
         output = model(image.to(device), text.to(device))
@@ -65,9 +83,10 @@ def eval(model_or_path, test_data_folder, test_batch_size, result_file=None, dat
         accs.append(acc)
 
     ave_accuracy = sum(accs) / len(accs)
+    confusion_m = confusion_matrix(all_labels, predictions)
 
     if is_return:
-        return ave_accuracy
+        return ave_accuracy, confusion_m
 
     print('---------------------------------------------')
     print(f'Eval finished. Average Accuracy: {ave_accuracy}')

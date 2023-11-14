@@ -105,16 +105,26 @@ def setup_dataset(args, processer):
         test_dataset = GTDataset(img_folder, text_folder, label_folder, processer)
         
         # shuffle to prevent bias
-        split_index = len(train_dataset.data)
+        if args.shuffle:
+            all_data = copy.deepcopy(train_dataset.data) + copy.deepcopy(test_dataset.data)
+            split_index = int(len(all_data) * 0.8)
+            random.shuffle(all_data)
+            train_dataset.data = all_data[:split_index]
+            test_dataset.data = all_data[split_index:]
+
+        # k-fold cross-validation
+        """
         all_data = copy.deepcopy(train_dataset.data) + copy.deepcopy(test_dataset.data)
-        random.shuffle(all_data)
-        train_dataset.data = all_data[:split_index]
-        test_dataset.data = all_data[split_index:]
+        j = len(all_data) // 6
+        i = 0
+        train_dataset.data = all_data[:i*j] + all_data[i*j+j:]
+        test_dataset.data = all_data[i*j:i*j+j]
+        """
 
         test_dataloader = DataLoader(test_dataset, batch_size=args.test_batch_size, shuffle=True, num_workers=0, pin_memory=True)
     else:
         test_dataloader = None
-    logging.info('Dataloader setup finish')
+    logging.info(f'Dataloader setup finish: train {train_dataset.get_class_num()}, test {test_dataset.get_class_num()}')
     return train_dataloader, test_dataloader
 
 def train(args):
@@ -194,8 +204,8 @@ def train(args):
                 if args.eval and cur_step % args.eval_step == 0:
                     logging.info('Begin to eval......')
                     result_file = os.path.join(args.output_dir, f'result_{cur_step}.json')
-                    ave_accuracy = eval(model, args.test_data_folder, args.test_batch_size, result_file, dataloader=test_dataloader, is_return=True)
-                    logging.info(f'Eval finished. Average Accuracy: {round(ave_accuracy, 4)}')
+                    ave_accuracy, confusion_matrix = eval(model, args.test_data_folder, args.test_batch_size, result_file, dataloader=test_dataloader, is_return=True)
+                    logging.info(f'Eval finished. Average Accuracy: {round(ave_accuracy, 4)}, Confusion Matrix:{confusion_matrix}')
 
                 batch_start_time = time.time()
                 batch_loss = []
