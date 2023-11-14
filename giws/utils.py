@@ -1,5 +1,8 @@
 import os
+import random
+import numpy as np
 
+import torch
 import torch.distributed as dist
 
 def get_local_rank():
@@ -19,3 +22,10 @@ def get_device(gpu_list=None):
         return get_local_rank()
     else:
         return gpu_list[get_local_rank()]
+
+def setup_seed(seed):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)

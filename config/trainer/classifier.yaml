@@ -4,16 +4,20 @@ defaults:
 mode: classifier
 
 device: 0
+seed: 1
 
 # model
-input_size: 2048
+input_size: 1024
 clip_path: "/home/taosiyuan/Giws/giws/CFIT/model/pretrained/clip_cn_rn50.pt"
+
+# data
+shuffle: true
 
 # train
 train_batch_size: 128
 accumulate_step: 4
 train_data_folder: "/home/taosiyuan/DataSet/train" 
-epochs: 1000 
+epochs: 200 
 
 # accelerate
 amp: true
