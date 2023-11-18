@@ -7,8 +7,10 @@ from omegaconf import DictConfig
 
 import torch
 
-from giws.CFIT.train_CFIT import train
+from giws.CFIT.scripts.train_CFIT import train
 from giws import utils
+
+logger = None
 
 class WorkerLogFilter(logging.Filter):
     def __init__(self, rank=-1):
@@ -22,6 +24,7 @@ class WorkerLogFilter(logging.Filter):
 
 def setup(cfg):
     utils.setup_ddp()
+    utils.setup_seed(cfg.seed)
     world_rank = utils.get_world_rank()
     local_rank = utils.get_local_rank()
 
@@ -63,6 +66,7 @@ def setup(cfg):
     logging.info('-----------------')
 
     logging.info(f'torch.distributed.init_process_group: world_rank={world_rank}, local_rank={local_rank}')
+    logger = logging.getLogger(__name__)
 
 def cleanup(cfg):
     torch.distributed.destroy_process_group()
