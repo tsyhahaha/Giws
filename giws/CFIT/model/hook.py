@@ -15,7 +15,7 @@ class GradientChecker:
                 print(f"NaN gradient detected in module {module.__class__.__name__}, input index {idx}")
 
     def register_hooks(self, module):
-        hook = module.register_backward_hook(self.check_gradients)
+        hook = module.register_full_backward_hook(self.check_gradients)
         self.hooks.append(hook)
          
         # 递归注册所有子模块的反向传播钩子
