@@ -12,5 +12,19 @@ The operation of the entire project is managed through **hydra**, please refer [
 **Baseline**：CLIP（Bert + Res50 or ViT）
 
 * Model & Training & Evaluation：Complete model definition, training and evaluation script writing. Comprehensive data pipeline constructing.
-* Accelerate：AMP（auto mixed precision）、Accumulate Gradient.
+* Accelerate：AMP（auto mixed precision）、Accumulate Gradient、DDP（Distributed Data Parallel）
 * PEFT (parameter-efficient fine-tuning)：LoRA（use peft by huggingface）.
+
+**Memory**
+
+AMP and AG is applied by defalt.
+
+| Model | Config           | Memory usage |
+| ----- | ---------------- | ------------ |
+| CLIP  | Full Fine-tuning | 27.6 G       |
+| CLIP  | LoRA             | 9.3 G        |
+| CLIP  | LoRA + CrossAttn | 10.7 G       |
+| BERT  | LoRA             | 8.6 G        |
+| VIT   | LoRA             | 5.0 G        |
+
+Results from distributed training may be 3-5 points lower than those from single-card training. This could be related to training scheduling, and it may be necessary to implement optimizer scheduling strategies for learning rates and other parameters.
