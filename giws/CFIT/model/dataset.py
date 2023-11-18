@@ -2,7 +2,6 @@ import os
 import sys
 from PIL import Image
 
-sys.path.append('../cn_clip')
 import clip as clip
 
 import torch
