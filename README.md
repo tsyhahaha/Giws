@@ -7,7 +7,7 @@ The operation of the entire project is managed through **hydra**, please refer [
 
 ## CFIT(classifier of img and text)
 
-> Three classification tasks: according to the image and its corresponding text. Training data is from Twitter.
+> Sentiment Classification tasks(three types of motion): according to the image and its corresponding text. Training data is from Twitter.
 
 **Baseline**：CLIP（Bert + Res50 or ViT）
 
