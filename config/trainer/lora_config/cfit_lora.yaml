@@ -2,4 +2,4 @@ lora_r: 16
 lora_alpha: 16
 lora_dropout: 0.1
 lora_bias: 'lora_only'
-
+modules_to_save: ["classifier", "_cross_attn"]

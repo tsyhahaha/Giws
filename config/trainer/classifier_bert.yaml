@@ -7,8 +7,7 @@ seed: 1
 gpu_list: [0]
 
 # model
-name: clip
-use_cross_attn: true
+name: bert
 img_input_size: 512
 text_input_size: 512
 clip_path: "/home/taosiyuan/Giws/giws/CFIT/model/pretrained/clip_cn_rn50.pt"
@@ -23,7 +22,7 @@ fold_index: 0
 train_batch_size: 128
 accumulate_step: 4
 train_data_folder: "/home/taosiyuan/DataSet/train" 
-epochs: 500
+epochs: 2000
 
 # accelerate
 amp: true
@@ -33,7 +32,7 @@ learning_rate: 0.001
 max_grad_norm: 1.0
 
 # output
-output_dir: "/home/taosiyuan/Giws/output/clip_wt_attn" 
+output_dir: "/home/taosiyuan/Giws/output/bert" 
 save_step: 500 
 
 # logger
