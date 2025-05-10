@@ -1,0 +1,7 @@
+image_size: 224
+patch_size: 8
+num_classes: 10
+dim: 128
+depth: 4 # layer num of encoder
+heads: 4
+mlp_dim: 512

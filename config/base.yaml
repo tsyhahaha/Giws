@@ -1,0 +1,24 @@
+defaults:
+ - model: default
+
+target: minst
+
+gpu_id: 0
+seed: 42
+verbose: false
+
+clip_grad: true
+clip_mode: "norm"
+clip_grad_value: 1.0
+
+epochs: 3
+batch_size: 256
+lr: 1e-3
+
+# eval
+eval: true
+eval_interval: 1 # by epoch interval
+
+
+save_interval: 1 # by epoch interval
+output_dir: ./trainer_output
