@@ -1,0 +1,30 @@
+defaults:
+ - model: lstm
+
+target: lstm
+
+gpu_id: 0
+seed: 42
+verbose: false
+
+data_path: ../data/tang.npz
+
+# training
+epochs: 50
+batch_size: 256
+lr: 1e-3
+# gradients
+clip_grad: true
+clip_mode: "norm"
+clip_grad_value: 1.0
+# amp
+amp_enabled: true
+
+
+# eval
+eval: false
+eval_interval: 1 # by epoch interval
+
+
+save_interval: 1 # by epoch interval
+output_dir: ./trainer_output/lstm

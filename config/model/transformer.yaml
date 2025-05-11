@@ -1,0 +1,9 @@
+src_vocab_size: 30000
+trg_vocab_size: 30000
+src_pad_idx: 0
+trg_pad_idx: 0    
+embed_dim: 512
+n_blocks: 6
+n_heads: 8
+ff_hid_dim: 2048
+dropout: 0.1

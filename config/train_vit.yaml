@@ -7,12 +7,12 @@ gpu_id: 0
 seed: 42
 verbose: false
 
-data_path: /mnt/user/taosiyuan/projects/TransXNet/data
+data_path: ../data
 
-# training
-epochs: 50
-batch_size: 256
-lr: 1e-3
+# ref: https://github.com/kentaroy47/vision-transformers-cifar10/blob/main/train_cifar10.py
+epochs: 500
+batch_size: 512
+lr: 1e-4
 # gradients
 clip_grad: true
 clip_mode: "norm"
@@ -23,8 +23,8 @@ amp_enabled: true
 
 # eval
 eval: true
-eval_interval: 1 # by epoch interval
+eval_interval: 1
 
 
-save_interval: 1 # by epoch interval
-output_dir: ./trainer_output
+save_interval: 10
+output_dir: ./trainer_output/vit

@@ -7,7 +7,12 @@ from datetime import datetime
 
 import torch
 
-from giws.trainer import train_func_minst, train_func_vit
+from giws.trainer import (
+    train_func_minst, 
+    train_func_vit, 
+    train_func_lstm, 
+    train_func_transformer,
+)
 from giws import utils
 
 logger = None
@@ -84,11 +89,14 @@ def main(cfg : DictConfig):
         train_func_minst(cfg)
     elif target == "vit":
         train_func_vit(cfg)
+    elif target == "lstm":
+        train_func_lstm(cfg)
+    elif target == "transformer":
+        train_func_transformer(cfg)
     else:
         raise NotImplementedError(f'train mode {target} not implemented')
     
     cleanup(cfg)
 
 if __name__ == '__main__':
-
     main()

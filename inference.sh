@@ -1,1 +1,0 @@
-python inference.py --config-name=classifier_vit

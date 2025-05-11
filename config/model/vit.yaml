@@ -1,7 +1,10 @@
-image_size: 224
-patch_size: 8
+# ref: https://github.com/kentaroy47/vision-transformers-cifar10/blob/main/train_cifar10.py
+image_size: 32
+patch_size: 4
 num_classes: 10
-dim: 128
-depth: 4 # layer num of encoder
-heads: 4
+dim: 512
+depth: 6
+heads: 8
 mlp_dim: 512
+dropout: 0.1
+emb_dropout: 0.1

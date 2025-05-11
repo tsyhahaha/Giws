@@ -1,0 +1,14 @@
+defaults:
+ - model: lstm
+
+target: lstm
+verbose: false
+use_gpu: true
+
+max_gen_len: 1000
+
+data_path: ../data/tang.npz
+model_path: /mnt/user/taosiyuan/projects/Giws/trainer_output/20250510_164130/checkpoints/checkpoint_step_8550.ckpt
+
+output_dir: ./inference_output/
+

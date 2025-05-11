@@ -2,8 +2,7 @@ import torch
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.amp import GradScaler, autocast
-from contextlib import nullcontext
+from torch.utils.data import DataLoader
 
 from torchvision import datasets, transforms
 
@@ -11,69 +10,42 @@ import os
 import time
 import logging
 
-from giws.models import ViT
+import numpy as np
+
+from giws.models import PoetryModel
 from giws.trainer import dispatch_clip_grad
 
-
 def setup_model(args):
-    model = ViT(**args.model)
+    model = PoetryModel(**args.model)
     model.to(args.gpu_id)
     logging.info(model)
     logging.info('Model setup finish')
     return model.train()
 
-
-
-def get_train_transforms(args):
-    return transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.Resize(args.model.image_size),
-        transforms.RandomHorizontalFlip(),
-        transforms.ToTensor(),
-        transforms.Normalize(mean = (0.4914, 0.4822, 0.4465),
-                             std = (0.2023, 0.1994, 0.2010))
-    ])
-
-def get_test_transforms(args):  
-    return transforms.Compose([
-        transforms.Resize(args.model.image_size),
-        transforms.ToTensor(),
-        transforms.Normalize(mean = (0.4914, 0.4822, 0.4465),
-                             std = (0.2023, 0.1994, 0.2010))
-    ])
-
 def setup_dataset(args):
-    data_path = args.get("data_path", "../data")
-    train_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10(data_path, train=True, download=True,
-                       transform=get_train_transforms(args)),
-            batch_size=args.batch_size,
-            shuffle=True,
-            num_workers=4,
-            pin_memory=True,
-            persistent_workers=True
-        )
-    
-    if args.eval:
-        test_loader = torch.utils.data.DataLoader(
-            datasets.CIFAR10(data_path, train=False,
-                    transform=get_test_transforms(args)),
-            batch_size=args.batch_size,
-            shuffle=False,
-            num_workers=2,
-            pin_memory=True
-        )
-    else:
-        test_loader = None
-        
-    logging.info(f'Dataloader setup finish: train {len(train_loader)}, test {len(test_loader)}')
-    return train_loader, test_loader
+    data_path = args.get("data_path", None)
+    assert data_path is not None, "Please specify the data path in the configuration file"
+    datas = np.load(data_path, allow_pickle=True)
+    data = torch.from_numpy(datas['data'])
+    ix2word = datas['ix2word'].item()
+    word2ix = datas['word2ix'].item()
+
+    logging.info(f"Vocab size: {len(word2ix)}")
+
+    train_loader = DataLoader(data, 
+                            batch_size=args.batch_size,
+                            shuffle=True,
+                            num_workers=2)
+
+
+    return train_loader, None
 
 def test(model, device, test_loader):
+    if test_loader is None:
+        return np.nan
     model.eval()
     test_loss = 0
     correct = 0
-    total = 0
     with torch.no_grad():
         for data, target in test_loader:
             data, target = data.to(device), target.to(device)
@@ -84,7 +56,7 @@ def test(model, device, test_loader):
 
     test_loss /= len(test_loader.dataset)
     accuracy = 100. * correct / len(test_loader.dataset)
-    logging.info(f'\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} ({accuracy:.2f}%)\n')
+    print(f'\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} ({accuracy:.2f}%)\n')
     return accuracy
 
 def train_func(args):
@@ -92,11 +64,7 @@ def train_func(args):
     model = setup_model(args)
     train_dataloader, test_dataloader = setup_dataset(args)
 
-    amp_enabled = args.get("amp_enabled", False)
-
     # loss and optimizer
-    scaler = GradScaler(enabled=amp_enabled)
-    context = autocast('cuda') if amp_enabled  else nullcontext()
     optimizer = optim.AdamW(model.parameters(), args.lr)
     scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
     max_grad_norm = args.get('clip_grad_value', 1.0)
@@ -129,20 +97,21 @@ def train_func(args):
 
     for epoch in range(args.epochs):
         optimizer.zero_grad()
-        for batch, (image, label) in enumerate(train_dataloader):
+        for batch, data in enumerate(train_dataloader):
             batch_start_time = time.time()
-
+            data = data.long().transpose(1,0).contiguous()
+            data = data.to(device)
+            input_ids, target = data[:-1,:], data[1:,:]
             # forward/backward propagation
-            with context:
-                output = model(image.to(device))
-                loss = F.nll_loss(output, label.to(device))
-
-            scaler.scale(loss).backward()
+            output = model(input_ids)
+            loss = F.cross_entropy(output[0], target.view(-1))
+            loss.backward()
+            
             # gradients clip
             if args.get("clip_grad", False):
                 dispatch_clip_grad(model.parameters(), value=max_grad_norm, mode=args.clip_mode)
-            scaler.step(optimizer)
-            scaler.update()
+
+            optimizer.step()
             optimizer.zero_grad()
         
             batch_end_time = time.time()

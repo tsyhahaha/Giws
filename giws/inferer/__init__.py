@@ -1,0 +1,1 @@
+from giws.inferer.infer_lstm import inference as inference_func_lstm
