@@ -19,7 +19,6 @@ import giws.utils as ddp_utils
 from giws.models import Transformer
 from giws.data import TranslationDataset
 from giws.trainer import dispatch_clip_grad
-from giws.common import bleu
 
 def setup_model(args):
     device = ddp_utils.get_device(args.gpu_list) if args.use_gpu else 'cpu'
@@ -47,7 +46,8 @@ def setup_dataset(args):
     train_dataset = TranslationDataset(
         chinese_file=os.path.join(args.data_path, 'chinese.txt'),
         english_file=os.path.join(args.data_path, 'english.txt'),
-        alignment_file=os.path.join(args.data_path, 'Alignment.txt'),
+        chinese_vocab_file=os.path.join(args.data_path, 'chinese_vocab.json'),
+        english_vocab_file=os.path.join(args.data_path, 'english_vocab.json'),
         max_len=args.max_len,
     )
 
@@ -66,6 +66,8 @@ def setup_dataset(args):
         test_dataset = TranslationDataset(
             chinese_file=os.path.join(args.eval_data_path, 'cn.txt'),
             english_file=os.path.join(args.eval_data_path, 'en.txt'),
+            chinese_vocab_file=os.path.join(args.data_path, 'chinese_vocab.json'),
+            english_vocab_file=os.path.join(args.data_path, 'english_vocab.json'),
             max_len=args.max_len,
         )
         test_loader = DataLoader(
@@ -76,6 +78,7 @@ def setup_dataset(args):
             collate_fn=collate_fn,
         )
     else:
+        test_dataset = None
         test_loader = None
 
     logging.info(f'Dataloader setup finish: train {len(train_dataset)}\t test {len(test_dataset) if test_dataset else 0}')
@@ -100,10 +103,10 @@ def test(args, model, device, test_dataloader, trg_word2idx):
             src = batch['src'].to(device)
             tgt = batch['trg'].to(device)
             
-            outputs = model(src, tgt[:, :-1])  # 去掉EOS token
+            outputs = model(src, tgt[:, :-1], 
+                            use_efficient_attn=args.use_efficient_attn)
             predictions = outputs.argmax(dim=-1)
             for i in range(predictions.size(0)):
-                # 处理参考句子 (去掉PAD和EOS之后的token)
                 ref_indices = []
                 for idx in tgt[i].tolist():
                     if idx == eos_idx:
@@ -112,7 +115,6 @@ def test(args, model, device, test_dataloader, trg_word2idx):
                         ref_indices.append(idx)
                 ref_sentence = [trg_idx2word[idx] for idx in ref_indices]
                 
-                # 处理预测句子 (去掉PAD和EOS之后的token)
                 hyp_indices = []
                 for idx in predictions[i].tolist():
                     if idx == eos_idx:
@@ -121,7 +123,6 @@ def test(args, model, device, test_dataloader, trg_word2idx):
                         hyp_indices.append(idx)
                 hyp_sentence = [trg_idx2word[idx] for idx in hyp_indices]
                 
-                # 存储结果
                 all_references.append([ref_sentence])  # 注意BLEU需要references是列表的列表
                 all_hypotheses.append(hyp_sentence)
     
@@ -135,7 +136,7 @@ def train_func(args):
     device = ddp_utils.get_device(args.gpu_list) if args.use_gpu else 'cpu'
     model = setup_model(args)
     train_dataloader, test_dataloader = setup_dataset(args)
-    word2idx = train_dataloader.dataset.english_word2idx
+    word2idx = train_dataloader.dataset.get_word2idx(target='trg')
 
     amp_enabled = args.get("amp_enabled", False)
 
@@ -143,7 +144,7 @@ def train_func(args):
     scaler = GradScaler(enabled=amp_enabled)
     context = autocast('cuda') if amp_enabled  else nullcontext()
     optimizer = optim.AdamW(model.parameters(), args.lr)
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs * len(train_dataloader))
     max_grad_norm = args.get('clip_grad_value', 1.0)
     all_batch_length = len(train_dataloader) 
 
@@ -183,15 +184,23 @@ def train_func(args):
                 output = model(
                     src=encoded_input['src'],   # [batch_size, max_seq_len]
                     trg=encoded_input['trg'][:, :-1],   # [batch_size, max_seq_len]
+                    use_efficient_attn=args.use_efficient_attn
                 )
-                loss = F.cross_entropy(output, encoded_input['trg_one_hot'][:,1:,:])  # [batch_size, max_seq_len, vocab_size]
+                loss = F.cross_entropy(
+                    output.view(-1, output.size(-1)),
+                    encoded_input['trg'][:, 1:].contiguous().view(-1),
+                    ignore_index=word2idx['<pad>']  # 如果使用padding_idx=0
+                )
 
-            scaler.scale(loss).backward()
             # gradients clip
+            scaler.scale(loss).backward()
             if args.get("clip_grad", False):
-                dispatch_clip_grad(model.parameters(), value=max_grad_norm, mode=args.clip_mode)
+                scaler.unscale_(optimizer)
+                torch.nn.utils.clip_grad_norm_(model.parameters(), max_grad_norm)
+            
             scaler.step(optimizer)
             scaler.update()
+            scheduler.step()
             optimizer.zero_grad()
         
             batch_end_time = time.time()
@@ -199,13 +208,11 @@ def train_func(args):
             logging.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
             cur_step += 1
             
-        scheduler.step()
-
         # save checkpoints
         if epoch % args.save_interval == 0 or epoch == args.epochs:
             save_checkpoint(cur_step)
         # eval by epoch interval
-        if (args.eval and epoch % args.eval_interval == 0 and device==0) or epoch == args.epochs - 1:
+        if (args.eval and epoch % args.eval_interval == 0 and device == 0) or epoch == args.epochs - 1:
             logging.info(f'Epoch [{epoch+1}/{args.epochs}] Beginning to test......')
             bleu_score = test(args, model, device, test_dataloader, word2idx)
             logging.info(f'Epoch [{epoch+1}/{args.epochs}] Test finished, bleu score: {bleu_score}')

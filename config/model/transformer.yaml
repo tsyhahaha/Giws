@@ -1,7 +1,7 @@
-src_vocab_size: 30000
-trg_vocab_size: 30000
+src_vocab_size: 53713
+trg_vocab_size: 35029
 src_pad_idx: 0
-trg_pad_idx: 0    
+trg_pad_idx: 0
 embed_dim: 512
 n_blocks: 6
 n_heads: 8

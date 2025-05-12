@@ -1,6 +1,9 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
+from typing import Optional, Union
+from einops import rearrange
 
 class Transformer(nn.Module):
     def __init__(self,
@@ -14,7 +17,7 @@ class Transformer(nn.Module):
                  ff_hid_dim,
                  max_length,
                  dropout,
-                 device):
+                 device,):
         super().__init__()
         self.encoder = Encoder(src_vocab_size,
                                embed_dim,
@@ -23,7 +26,7 @@ class Transformer(nn.Module):
                                ff_hid_dim,
                                max_length,
                                dropout,
-                               device)
+                               device,)
         self.decoder = Decoder(trg_vocab_size,
                                embed_dim,
                                n_blocks,
@@ -31,7 +34,7 @@ class Transformer(nn.Module):
                                ff_hid_dim,
                                max_length,
                                dropout,
-                               device)
+                               device,)
         self.src_pad_idx = src_pad_idx
         self.trg_pad_idx = trg_pad_idx
         self.device = device
@@ -46,13 +49,65 @@ class Transformer(nn.Module):
         trg_mask = torch.tril(torch.ones((trg_len, trg_len))).bool().to(self.device) & trg_pad_mask
         return trg_mask.to(self.device)
 
-    def forward(self, src, trg):
+    def forward(self, src, trg, use_efficient_attn=False):
         src_mask = self.src_mask(src)
         trg_mask = self.trg_mask(trg)
-        encoded = self.encoder(src, src_mask)
-        decoded = self.decoder(trg, encoded, trg_mask, src_mask)
+        encoded = self.encoder(src, src_mask, use_efficient_attn=use_efficient_attn)
+        decoded = self.decoder(trg, encoded, trg_mask, src_mask, use_efficient_attn=use_efficient_attn)
         return decoded
 
+# ref: https://github.com/bytedance/Protenix/blob/main/protenix/model/modules/primitives.py
+def _attention(
+    q: torch.Tensor,
+    k: torch.Tensor,
+    v: torch.Tensor,
+    attn_bias: Optional[torch.Tensor] = None,
+    use_efficient_implementation: bool = False,
+    attn_weight_dropout_p: float = 0.0,
+    inplace_safe: bool = False,
+) -> torch.Tensor:
+    """Attention.
+
+    Args:
+        q (torch.Tensor): query tensor of shape [..., n_q, d]
+        k (torch.Tensor): key tensor of shape [..., n_kv, d]
+        v (torch.Tensor): value tensor of shape[..., n_kv, d]
+        attn_bias (torch.Tensor, optional): attention bias tensor of shape [..., n_q, n_kv]. Defaults to None.
+        use_efficient_implementation (bool): whether to use the torch.nn.functional.scaled_dot_product_attention, Defaults to False.
+        attn_weight_dropout_p (float): Dropout probability; if greater than 0.0, dropout is applied, Defaults to 0.0.
+
+    Returns:
+        torch.Tensor: output of tensor [..., n_q, d]
+    """
+    assert k.shape == v.shape
+    if use_efficient_implementation:
+        attn_output = F.scaled_dot_product_attention(
+            query=q,
+            key=k,
+            value=v,
+            attn_mask=attn_bias,
+            dropout_p=attn_weight_dropout_p,
+        )
+        return attn_output
+    # [..., n_kv, d] -> [..., d, n_kv]
+    k = k.transpose(-1, -2)
+
+    # [..., n_q, d], [..., d, n_kv] -> [..., n_q, n_kv]
+    attn_weights = q @ k
+
+    if attn_bias is not None:
+        if inplace_safe:
+            attn_weights += attn_bias
+        else:
+            attn_weights = attn_weights + attn_bias
+
+    # [..., n_q, n_kv]
+    attn_weights = F.softmax(attn_weights, dim=-1)
+
+    # [..., n_q, n_kv], [..., n_kv, d] -> [..., n_q, d]
+    attn_output = attn_weights @ v
+
+    return attn_output
 
 class MultiHeadAttention(nn.Module):
     def __init__(self, embed_dim, n_heads, dropout):
@@ -61,6 +116,7 @@ class MultiHeadAttention(nn.Module):
         self.n_heads = n_heads
         self.embed_dim = embed_dim
         self.scale = embed_dim ** 0.5
+        self.dropout_ratio = dropout
 
         self.keys = nn.Linear(embed_dim, embed_dim)
         self.queries = nn.Linear(embed_dim, embed_dim)
@@ -68,7 +124,8 @@ class MultiHeadAttention(nn.Module):
         self.proj = nn.Linear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, q, k, v, mask=None):
+    def forward(self, q, k, v, mask=None, 
+                use_efficient_implementation=False):
         N = q.size(0)          # batch_size
         Q = self.queries(q)    # shape: [N, query_len, embed_dim]
         K = self.keys(k)       # shape: [N, key_len, embed_dim]
@@ -78,17 +135,37 @@ class MultiHeadAttention(nn.Module):
         K = K.view(N, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)  # shape: [N, n_heads, key_len, head_dim]
         V = V.view(N, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)  # shape: [N, n_heads, value_len, head_dim]
 
-        energy = (Q @ K.permute(0, 1, 3, 2)) / self.scale
+        # Naive implementation
+        # energy = (Q @ K.permute(0, 1, 3, 2)) / self.scale # [N, n_heads, key_len, query_len]
+        # if mask is not None:
+        #     energy = energy.masked_fill(mask == 0, torch.finfo(Q.dtype).min)
+
+        # attention = energy.softmax(-1)           # shape: [N, n_heads, query_len, key_len]
+        # x = self.dropout(attention) @ V          # shape: [N, n_heads, query_len, key_len]
+        # x = x.permute(0, 2, 1, 3).contiguous()   # shape: [N, query_len, n_heads, head_dim]
+        # x = x.view(N, -1, self.embed_dim)        # shape: [N, query_len, embed_dim]
+        # x = self.proj(x)
+        # return x
+
+        # broadcast to [B, N_q, N_kv]
+        attn_bias = None
         if mask is not None:
-            energy = energy.masked_fill(mask == 0, torch.finfo(Q.dtype).min)
+            assert mask.dim() == 4, f'mask\'s dim is {mask.dim()} != 4'
+            attn_bias = mask.to(dtype=q.dtype)
+            attn_bias = (1.0 - attn_bias) * -1e9      # padding -> -1e9， real token -> 0
 
-        attention = energy.softmax(-1)           # shape: [N, n_heads, query_len, key_len]
-        x = self.dropout(attention) @ V          # shape: [N, n_heads, query_len, key_len]
-        x = x.permute(0, 2, 1, 3).contiguous()   # shape: [N, query_len, n_heads, head_dim]
-        x = x.view(N, -1, self.embed_dim)        # shape: [N, query_len, embed_dim]
-        x = self.proj(x)
+        out = _attention(
+                q=Q,
+                k=K,
+                v=V,
+                attn_bias=attn_bias,
+                use_efficient_implementation=use_efficient_implementation,
+                attn_weight_dropout_p=self.dropout_ratio,
+            )
+        # Revert back to orignal shape
+        out = rearrange(out, "b h s c -> b s (h c)")
+        return out
 
-        return x
 
 
 class EncoderLayer(nn.Module):
@@ -105,8 +182,8 @@ class EncoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
         self.norm2 = nn.LayerNorm(embed_dim)
 
-    def forward(self, src, mask):
-        attention = self.attention(src, src, src, mask)
+    def forward(self, src, mask, use_efficient_attn=False):
+        attention = self.attention(src, src, src, mask, use_efficient_attn)
         x = self.norm1(attention + self.dropout(src))
         out = self.mlp(x)
         out = self.norm2(out + self.dropout(x))
@@ -123,7 +200,7 @@ class Encoder(nn.Module):
         self.blocks = nn.ModuleList([EncoderLayer(embed_dim, n_heads, ff_hid_dim, dropout)] * n_blocks)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, src, mask):
+    def forward(self, src, mask, use_efficient_attn=False):
         N, seq_len = src.shape
         positions = torch.arange(0, seq_len).expand(N, seq_len).to(self.device)
         pos_embeddings = self.pos_emb(positions)
@@ -131,7 +208,7 @@ class Encoder(nn.Module):
         out = self.dropout(pos_embeddings + tok_embeddings)
 
         for block in self.blocks:
-            out = block(out, mask)
+            out = block(out, mask, use_efficient_attn)
 
         return out
 
@@ -152,10 +229,10 @@ class DecoderLayer(nn.Module):
         self.norm3 = nn.LayerNorm(embed_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, trg, src, trg_mask, src_mask):
-        trg_attention = self.self_attention(trg, trg, trg, trg_mask)
+    def forward(self, trg, src, trg_mask, src_mask, use_efficient_attn=False):
+        trg_attention = self.self_attention(trg, trg, trg, trg_mask, use_efficient_attn)
         trg = self.norm1(trg + self.dropout(trg_attention))
-        joint_attention = self.joint_attention(trg, src, src, src_mask)
+        joint_attention = self.joint_attention(trg, src, src, src_mask, use_efficient_attn)
         trg = self.norm2(trg + self.dropout(joint_attention))
         out = self.mlp(trg)
         out = self.norm3(trg + self.dropout(out))
@@ -163,7 +240,7 @@ class DecoderLayer(nn.Module):
 
 
 class Decoder(nn.Module):
-    def __init__(self, vocab_size, embed_dim, n_blocks, n_heads, ff_hid_dim, max_length, dropout, device):
+    def __init__(self, vocab_size, embed_dim, n_blocks, n_heads, ff_hid_dim, max_length, dropout, device,):
         super().__init__()
         self.device = device
         self.scale = embed_dim ** 0.5
@@ -173,7 +250,7 @@ class Decoder(nn.Module):
         self.blocks = nn.ModuleList([DecoderLayer(embed_dim, n_heads, ff_hid_dim, dropout)] * n_blocks)
         self.fc = nn.Linear(embed_dim, vocab_size)
 
-    def forward(self, trg, src, trg_mask, src_mask):
+    def forward(self, trg, src, trg_mask, src_mask, use_efficient_attn=False):
         N, trg_len = trg.shape
         positions = torch.arange(0, trg_len).expand(N, trg_len).to(self.device)
         pos_embeddings = self.pos_embedding(positions)
@@ -181,7 +258,7 @@ class Decoder(nn.Module):
         trg = self.dropout(pos_embeddings + tok_embeddings)
 
         for block in self.blocks:
-            trg = block(trg, src, trg_mask, src_mask)
+            trg = block(trg, src, trg_mask, src_mask, use_efficient_attn)
 
         output = self.fc(trg)
         return output

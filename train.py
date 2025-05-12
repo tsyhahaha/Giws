@@ -41,7 +41,7 @@ def setup(cfg):
     current_timestamp = time.time()
     local_time = time.localtime(current_timestamp)
     formatted_time = time.strftime('%m-%d_%H:%M', local_time)
-    log_file = os.path.abspath(os.path.join(cfg.output_dir, 'logs', f'{formatted_time}.log'))
+    log_file = os.path.abspath(os.path.join(cfg.output_dir, 'logs', f'{world_rank}.log'))
 
     level = logging.DEBUG if cfg.verbose else logging.INFO
     # fmt = f'%(asctime)-15s [%(levelname)s] (%(filename)s:%(lineno)d) Rank {world_rank} | %(message)s'
@@ -54,9 +54,11 @@ def setup(cfg):
         return h
 
     handlers = [
-        logging.StreamHandler(),
         logging.FileHandler(log_file),
-        ]
+    ]
+    if world_rank == 0:
+        handlers.append(logging.StreamHandler())
+    
 
     handlers = list(map(_handler_apply, handlers))
 
