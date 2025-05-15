@@ -1,40 +1,42 @@
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.optim.lr_scheduler import CosineAnnealingLR
+from torch.optim.lr_scheduler import ConstantLR
 from torch.amp import GradScaler, autocast
 from contextlib import nullcontext
 
 from torchvision import datasets, transforms
+from torchvision.transforms import RandAugment
 
 import os
 import time
 import logging
 
 from giws.models import ViT
-from giws.optim import dispatch_clip_grad
+from giws.utils import dispatch_clip_grad
 
+logger = logging.getLogger(__name__)
 
 def setup_model(args):
     model = ViT(**args.model)
     model.to(args.gpu_id)
-    logging.info(model)
-    logging.info('Model setup finish')
+    logger.info(model)
+    logger.info('Model setup finish')
     return model.train()
-
 
 
 def get_train_transforms(args):
     return transforms.Compose([
-        transforms.RandomCrop(32, padding=4),
-        transforms.Resize(args.model.image_size),
+        transforms.RandomResizedCrop(args.model.image_size, scale=(0.8, 1.0)),
         transforms.RandomHorizontalFlip(),
+        RandAugment(num_ops=2, magnitude=5),  # 可调参数
         transforms.ToTensor(),
-        transforms.Normalize(mean = (0.4914, 0.4822, 0.4465),
-                             std = (0.2023, 0.1994, 0.2010))
+        transforms.Normalize(mean=(0.4914, 0.4822, 0.4465),
+                             std=(0.2023, 0.1994, 0.2010)),
+        transforms.RandomErasing(p=0.25, scale=(0.02, 0.2), ratio=(0.3, 3.3), value='random')
     ])
 
-def get_test_transforms(args):  
+def get_test_transforms(args):
     return transforms.Compose([
         transforms.Resize(args.model.image_size),
         transforms.ToTensor(),
@@ -49,7 +51,7 @@ def setup_dataset(args):
                        transform=get_train_transforms(args)),
             batch_size=args.batch_size,
             shuffle=True,
-            num_workers=4,
+            num_workers=2,
             pin_memory=True,
             persistent_workers=True
         )
@@ -66,7 +68,7 @@ def setup_dataset(args):
     else:
         test_loader = None
         
-    logging.info(f'Dataloader setup finish: train {len(train_loader)}, test {len(test_loader)}')
+    logger.info(f'Dataloader setup finish: train {len(train_loader)}, test {len(test_loader)}')
     return train_loader, test_loader
 
 def test(model, device, test_loader):
@@ -84,7 +86,7 @@ def test(model, device, test_loader):
 
     test_loss /= len(test_loader.dataset)
     accuracy = 100. * correct / len(test_loader.dataset)
-    logging.info(f'\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} ({accuracy:.2f}%)\n')
+    logger.info(f'\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} ({accuracy:.2f}%)\n')
     return accuracy
 
 def train_func(args):
@@ -98,7 +100,7 @@ def train_func(args):
     scaler = GradScaler(enabled=amp_enabled)
     context = autocast('cuda') if amp_enabled  else nullcontext()
     optimizer = optim.AdamW(model.parameters(), args.lr)
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scheduler = ConstantLR(optimizer, factor=1.)
     max_grad_norm = args.get('clip_grad_value', 1.0)
     all_batch_length = len(train_dataloader) 
 
@@ -146,17 +148,17 @@ def train_func(args):
             optimizer.zero_grad()
         
             batch_end_time = time.time()
-            logging.info(f'optim step = {cur_step+1} loss = {round(loss.item(), 4)}')
-            logging.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
+            logger.info(f'optim step = {cur_step+1} loss = {round(loss.item(), 4)}')
+            logger.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
             cur_step += 1
-        scheduler.step()
+            scheduler.step()
 
         # save checkpoints
         if epoch % args.save_interval == 0 or epoch == args.epochs:
             save_checkpoint(cur_step)
         # eval by epoch interval
-        if (args.eval and epoch % args.eval_interval == 0 and device==0) or epoch == args.epochs - 1:
-            logging.info(f'Epoch [{epoch+1}/{args.epochs}] Begin to test......')
+        if (args.eval and epoch % args.eval_interval == 0) or epoch == args.epochs - 1:
+            logger.info(f'Epoch [{epoch+1}/{args.epochs}] Begin to test......')
             ave_accuracy = test(model, device, test_dataloader)
             if ave_accuracy > best_acc:
                 save_checkpoint(cur_step, best=True)

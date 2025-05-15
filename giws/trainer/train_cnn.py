@@ -10,13 +10,15 @@ import time
 import logging
 
 from giws.models import MINSTNet
-from giws.optim import dispatch_clip_grad
+from giws.utils import dispatch_clip_grad
+
+logger = logging.getLogger(__name__)
 
 def setup_model(args):
     model = MINSTNet()
     model.to(args.gpu_id)
-    logging.info(model)
-    logging.info('Model setup finish')
+    logger.info(model)
+    logger.info('Model setup finish')
     return model.train()
 
 def get_train_transforms():
@@ -58,7 +60,7 @@ def setup_dataset(args):
     else:
         test_loader = None
         
-    logging.info(f'Dataloader setup finish: train {len(train_loader)}, test {len(test_loader)}')
+    logger.info(f'Dataloader setup finish: train {len(train_loader)}, test {len(test_loader)}')
     return train_loader, test_loader
 
 def test(model, device, test_loader):
@@ -131,8 +133,8 @@ def train_func(args):
             optimizer.zero_grad()
         
             batch_end_time = time.time()
-            logging.info(f'optim step = {cur_step+1} loss = {round(loss.item(), 4)}')
-            logging.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
+            logger.info(f'optim step = {cur_step+1} loss = {round(loss.item(), 4)}')
+            logger.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
             cur_step += 1
         scheduler.step()
 
@@ -141,7 +143,7 @@ def train_func(args):
             save_checkpoint(cur_step)
         # eval by epoch interval
         if (args.eval and epoch % args.eval_interval == 0 and device==0) or epoch == args.epoch - 1:
-            logging.info('Begin to test......')
+            logger.info('Begin to test......')
             ave_accuracy = test(model, device, test_dataloader)
             if ave_accuracy > best_acc:
                 save_checkpoint(cur_step, best=True)

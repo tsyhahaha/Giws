@@ -14,10 +14,18 @@ import time
 import logging
 from functools import partial
 
-import giws.utils as ddp_utils
-from giws.optim import ScheduledOptim, dispatch_clip_grad
+import giws.utils.ddp_utils as ddp_utils
+from giws.optim import (
+    TransformerScheduledOptim,
+)
+from giws.utils import(
+    GradientChecker,
+    dispatch_clip_grad,
+)
 from giws.models import Transformer
 from giws.data import TranslationDataset
+
+logger = logging.getLogger(__name__)
 
 def cal_performance(pred, gold, trg_pad_idx, smoothing=False):
     ''' Apply label smoothing if needed '''
@@ -52,8 +60,8 @@ def setup_model(args):
         device=device,
     )
     model.to(device)
-    logging.info(model)
-    logging.info('Model setup finish')
+    logger.info(model)
+    logger.info('Model setup finish')
     return model
 
 def collate_fn(batch):
@@ -106,7 +114,8 @@ def setup_dataset(args):
         test_dataset = None
         test_loader = None
 
-    logging.info(f'Dataloader setup finish: train {len(train_dataset)}\t test {len(test_dataset) if test_dataset else 0}')
+    logger.info(f'Dataloader setup finish: train {len(train_dataset)}\t \
+                 test {len(test_dataset) if test_dataset else 0}')
     return train_dataloader, test_loader
 
 
@@ -135,31 +144,8 @@ def test(model, validation_data, device, pad_idx=[0,0]):
     accuracy = n_word_correct/n_word_total
     return loss_per_word, accuracy
 
-
-def train_func(args):
-    device = ddp_utils.get_device(args.gpu_list) if args.use_gpu else 'cpu'
-    model = setup_model(args)
-    model.train()
-    train_dataloader, test_dataloader = setup_dataset(args)
-    word2idx = train_dataloader.dataset.get_word2idx(target='trg')
-
-    amp_enabled = args.get("amp_enabled", False)
-
-    # loss and optimizer
-    scaler = GradScaler(enabled=amp_enabled)
-    context = autocast('cuda') if amp_enabled  else nullcontext()
-    scheduled_optim = ScheduledOptim(optim.Adam(model.parameters(), betas=(0.9, 0.98), eps=1e-09), 
-                               lr_mul=args.get('lr_mul', 1.),
-                               d_model=args.model.embed_dim,
-                                n_warmup_steps=args.warmup_steps)
-    max_grad_norm = args.get('clip_grad_value', 1.0)
-    all_batch_length = len(train_dataloader)
-
-    # initial vars
-    cur_step = 0
-    best_indicator = 0
-
-    def save_checkpoint(iter, best=False):
+def get_save_func(args, model):
+    def save_checkpoint(args, model, cur_step, best_indicator, best=False):
         ckpt_dir = os.path.join(args.output_dir, 'checkpoints')
         if not os.path.exists(ckpt_dir):
             os.makedirs(ckpt_dir)
@@ -171,16 +157,43 @@ def train_func(args):
             best_indicator=best_indicator
         )
         if not best:
-            ckpt_file = os.path.join(ckpt_dir, f'checkpoint_step_{iter}.ckpt')
+            ckpt_file = os.path.join(ckpt_dir, f'checkpoint_step_{cur_step}.ckpt')
         else:
             save_info['best_indicator'] = best_indicator
             ckpt_file = os.path.join(ckpt_dir, f'best_checkpoint.ckpt')
         torch.save(save_info, ckpt_file)
+    return partial(save_checkpoint, args=args, model=model)
 
-    # save initial model
+
+def train_func(args):
+    # model setup
+    device = ddp_utils.get_device(args.gpu_list) if args.use_gpu else 'cpu'
+    model = setup_model(args)
+    model.train()
+
+    # dataset setup
+    train_dataloader, test_dataloader = setup_dataset(args)
+    word2idx = train_dataloader.dataset.get_word2idx(target='trg')
+
+    # loss and optimizer
+    amp_enabled = args.get("amp_enabled", False)
+    scaler = GradScaler(enabled=amp_enabled)
+    context = autocast('cuda') if amp_enabled  else nullcontext()
+    scheduled_optim = TransformerScheduledOptim(optim.Adam(model.parameters(), betas=(0.9, 0.98), eps=1e-09), 
+                               lr_mul=args.get('lr_mul', 1.),
+                               d_model=args.model.embed_dim,
+                                n_warmup_steps=args.warmup_steps)
+    max_grad_norm = args.get('clip_grad_value', 1.0)
+    all_batch_length = len(train_dataloader)
+
+    # initialization
+    best_indicator = 0
+    save_checkpoint = get_save_func(args, model)
+    gradient_checker = GradientChecker(model, verbose=True, raise_on_nan=False)
     if device == 0:
         save_checkpoint(0)
 
+    # begin training
     for epoch in range(args.epochs):
         for batch, encoded_input in enumerate(train_dataloader):
             scheduled_optim.zero_grad()
@@ -200,38 +213,44 @@ def train_func(args):
                     ignore_index=word2idx['<pad>'],
                     label_smoothing=args.get('label_smoothing', 0.0),
                 )
+            scaler.scale(loss).backward()
 
             # gradients clip
-            scaler.scale(loss).backward()
             if args.get("clip_grad", False):
                 scaler.unscale_(scheduled_optim.get_optim())
                 dispatch_clip_grad(model.parameters(), max_grad_norm)
+
+            # gradients checker
+            if not gradient_checker.check_gradients():
+                logger.warning(f"Skipping optimizer step {scheduled_optim.get_step()} due to invalid gradients")
+                scheduled_optim.zero_grad()
+                continue
             
+            # gradients update
             scaler.step(scheduled_optim.get_optim())
             scaler.update()
             scheduled_optim.step_and_update_lr()
             batch_end_time = time.time()
 
-            # logging information
+            # logger information
             torch.distributed.barrier()
-            lr = scheduled_optim.get_lr()
-            logging.info(f'optim step = {cur_step+1} lr = {lr} loss = {round(loss.item(), 4)}')
-            logging.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
-            cur_step += 1
+            logger.info(f'optim step = {scheduled_optim.get_step()} \
+                         lr = {scheduled_optim.get_lr()} loss = {round(loss.item(), 4)}')
+            logger.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
             
-        # save checkpoints
+        # save checkpoints by interval
         if (epoch % args.save_interval == 0 or epoch == args.epochs) and device == 0:
-            save_checkpoint(cur_step)
-        # eval by epoch interval
+            save_checkpoint(scheduled_optim.get_step())
+        # eval by interval
         if (args.eval and epoch % args.eval_interval == 0) or epoch == args.epochs - 1:
             if device == 0:
-                logging.info(f'Epoch [{epoch+1}/{args.epochs}] Beginning to test......')
+                logger.info(f'Epoch [{epoch+1}/{args.epochs}] Beginning to test......')
                 val_loss, acc = test(model, test_dataloader, device)
-                logging.info(f'Epoch [{epoch+1}/{args.epochs}] Test finished, loss: {val_loss}, acc: {acc}')
+                logger.info(f'Epoch [{epoch+1}/{args.epochs}] Test finished, loss: {val_loss}, acc: {acc}')
 
                 if acc > best_indicator:
                     best_indicator = acc
-                    save_checkpoint(cur_step, best=True)
+                    save_checkpoint(scheduled_optim.get_step(), best=True)
 
         
                 

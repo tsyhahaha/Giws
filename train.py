@@ -13,11 +13,11 @@ from giws.trainer import (
     train_func_lstm, 
     train_func_transformer,
 )
-from giws import utils
+from giws.utils import ddp_utils
 
 logger = None
 
-class WorkerLogFilter(logging.Filter):
+class WorkerLogFilter(logger.Filter):
     def __init__(self, rank=-1):
         super().__init__()
         self._rank = rank
@@ -28,10 +28,10 @@ class WorkerLogFilter(logging.Filter):
         return True
 
 def setup(cfg):
-    utils.setup_ddp()
-    utils.setup_seed(cfg.seed)
-    world_rank = utils.get_world_rank()
-    local_rank = utils.get_local_rank()
+    ddp_utils.setup_ddp()
+    ddp_utils.setup_seed(cfg.seed)
+    world_rank = ddp_utils.get_world_rank()
+    local_rank = ddp_utils.get_local_rank()
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     cfg.output_dir = os.path.join(cfg.output_dir, timestamp)
@@ -43,40 +43,40 @@ def setup(cfg):
     formatted_time = time.strftime('%m-%d_%H:%M', local_time)
     log_file = os.path.abspath(os.path.join(cfg.output_dir, 'logs', f'{world_rank}.log'))
 
-    level = logging.DEBUG if cfg.verbose else logging.INFO
+    level = logger.DEBUG if cfg.verbose else logger.INFO
     # fmt = f'%(asctime)-15s [%(levelname)s] (%(filename)s:%(lineno)d) Rank {world_rank} | %(message)s'
     fmt = f'%(asctime)-15s [%(levelname)s] Rank {world_rank} | %(message)s'
 
     def _handler_apply(h):
         h.setLevel(level)
-        h.setFormatter(logging.Formatter(fmt, datefmt='%Y-%m-%d %H:%M:%S'))
+        h.setFormatter(logger.Formatter(fmt, datefmt='%Y-%m-%d %H:%M:%S'))
         #h.addFilter(WorkerLogFilter(world_rank),)
         return h
 
     handlers = [
-        logging.FileHandler(log_file),
+        logger.FileHandler(log_file),
     ]
     if world_rank == 0:
-        handlers.append(logging.StreamHandler())
+        handlers.append(logger.StreamHandler())
     
 
     handlers = list(map(_handler_apply, handlers))
 
-    for handler in logging.root.handlers[:]:
-        logging.root.removeHandler(handler)
+    for handler in logger.root.handlers[:]:
+        logger.root.removeHandler(handler)
 
-    logging.basicConfig(
+    logger.basicConfig(
         format=fmt,
         level=level,
         handlers=handlers)
     
     OmegaConf.save(cfg, os.path.join(cfg.output_dir, 'config.yaml'))
 
-    logging.info('-----------------')
-    logging.info(f'Arguments: {cfg}')
-    logging.info('-----------------')
+    logger.info('-----------------')
+    logger.info(f'Arguments: {cfg}')
+    logger.info('-----------------')
 
-    logging.info(f'torch.distributed.init_process_group: world_rank={world_rank}, local_rank={local_rank}')
+    logger.info(f'torch.distributed.init_process_group: world_rank={world_rank}, local_rank={local_rank}')
     logger = logging.getLogger(__name__)
 
 def cleanup(cfg):

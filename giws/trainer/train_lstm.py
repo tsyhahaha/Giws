@@ -4,8 +4,6 @@ import torch.optim as optim
 from torch.optim.lr_scheduler import CosineAnnealingLR
 from torch.utils.data import DataLoader
 
-from torchvision import datasets, transforms
-
 import os
 import time
 import logging
@@ -13,13 +11,15 @@ import logging
 import numpy as np
 
 from giws.models import PoetryModel
-from giws.optim import dispatch_clip_grad
+from giws.utils import dispatch_clip_grad
+
+logger = logging.getLogger(__name__)
 
 def setup_model(args):
     model = PoetryModel(**args.model)
     model.to(args.gpu_id)
-    logging.info(model)
-    logging.info('Model setup finish')
+    logger.info(model)
+    logger.info('Model setup finish')
     return model.train()
 
 def setup_dataset(args):
@@ -30,7 +30,7 @@ def setup_dataset(args):
     ix2word = datas['ix2word'].item()
     word2ix = datas['word2ix'].item()
 
-    logging.info(f"Vocab size: {len(word2ix)}")
+    logger.info(f"Vocab size: {len(word2ix)}")
 
     train_loader = DataLoader(data, 
                             batch_size=args.batch_size,
@@ -115,8 +115,8 @@ def train_func(args):
             optimizer.zero_grad()
         
             batch_end_time = time.time()
-            logging.info(f'optim step = {cur_step+1} loss = {round(loss.item(), 4)}')
-            logging.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
+            logger.info(f'optim step = {cur_step+1} loss = {round(loss.item(), 4)}')
+            logger.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
             cur_step += 1
         scheduler.step()
 
@@ -125,7 +125,7 @@ def train_func(args):
             save_checkpoint(cur_step)
         # eval by epoch interval
         if (args.eval and epoch % args.eval_interval == 0 and device==0) or epoch == args.epochs - 1:
-            logging.info(f'Epoch [{epoch+1}/{args.epochs}] Begin to test......')
+            logger.info(f'Epoch [{epoch+1}/{args.epochs}] Begin to test......')
             ave_accuracy = test(model, device, test_dataloader)
             if ave_accuracy > best_acc:
                 save_checkpoint(cur_step, best=True)
