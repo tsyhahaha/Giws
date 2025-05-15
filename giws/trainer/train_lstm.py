@@ -13,7 +13,7 @@ import logging
 import numpy as np
 
 from giws.models import PoetryModel
-from giws.trainer import dispatch_clip_grad
+from giws.optim import dispatch_clip_grad
 
 def setup_model(args):
     model = PoetryModel(**args.model)

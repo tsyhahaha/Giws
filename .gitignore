@@ -5,6 +5,10 @@
 **/pretrained/
 ./data/
 
+# ignore files
+*.pdf
+*.png
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]

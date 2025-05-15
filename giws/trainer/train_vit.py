@@ -12,7 +12,7 @@ import time
 import logging
 
 from giws.models import ViT
-from giws.trainer import dispatch_clip_grad
+from giws.optim import dispatch_clip_grad
 
 
 def setup_model(args):

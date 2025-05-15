@@ -3,8 +3,6 @@ import json
 import torch
 from torch.utils.data import Dataset
 
-
-
 class TranslationDataset(Dataset):
     def __init__(self, chinese_file, english_file, chinese_vocab_file, english_vocab_file, max_len=128):
         self.max_len = max_len
@@ -53,18 +51,18 @@ class TranslationDataset(Dataset):
         if not isinstance(sequence, torch.LongTensor):
             sequence = sequence.long()
         
-        sequence = sequence.unsqueeze(0)  # 变为 [1, seq_len]
+        sequence = sequence.unsqueeze(0)  # [1, seq_len]
         one_hot = torch.zeros(1, sequence.size(1), self.trg_vocab_size)
         one_hot.scatter_(2, sequence.unsqueeze(-1), 1)
 
         return one_hot.squeeze(0)
         
     def __getitem__(self, idx):
-        chinese_sent = ['<sos>'] + self.chinese_sentences[idx] + ['<eos>']
+        chinese_sent = ['<bos>'] + self.chinese_sentences[idx] + ['<eos>']
         chinese_indices = [self.chinese_word2idx.get(word, self.chinese_word2idx['<unk>']) 
                           for word in chinese_sent]
         
-        english_sent = ['<sos>'] + self.english_sentences[idx] + ['<eos>']
+        english_sent = ['<bos>'] + self.english_sentences[idx] + ['<eos>']
         english_indices = [self.english_word2idx.get(word, self.english_word2idx['<unk>']) 
                             for word in english_sent]
 

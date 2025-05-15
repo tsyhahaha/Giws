@@ -1,9 +1,12 @@
+# https://github.com/NVIDIA/DeepLearningExamples/blob/master/PyTorch/Translation/Transformer/README.md
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Optional, Union
+from typing import Optional
 from einops import rearrange
+import math
 
 class Transformer(nn.Module):
     def __init__(self,
@@ -55,6 +58,51 @@ class Transformer(nn.Module):
         encoded = self.encoder(src, src_mask, use_efficient_attn=use_efficient_attn)
         decoded = self.decoder(trg, encoded, trg_mask, src_mask, use_efficient_attn=use_efficient_attn)
         return decoded
+    
+    def generate(self, src, max_len=50, pad_idx=0, bos_idx=2, eos_idx=3, use_efficient_attn=False, beam_size=4):
+        device = src.device
+        batch_size = src.size(0)
+        sequences = [[] for _ in range(batch_size)]
+
+        for b in range(batch_size):
+            beams = [(torch.tensor([bos_idx], device=device), 0.0)]  # [(sequence_tensor, score)]
+            finished = []
+
+            for _ in range(max_len - 1):
+                all_candidates = []
+                for seq, score in beams:
+                    if seq[-1].item() == eos_idx:
+                        finished.append((seq, score))
+                        continue
+
+                    input_seq = seq.unsqueeze(0)  # shape: [1, t]
+                    out = self(src[b:b+1], input_seq, use_efficient_attn=use_efficient_attn)  # [1, t, vocab]
+                    log_probs = F.log_softmax(out[0, -1], dim=-1)  # [vocab]
+                    topk_probs, topk_idx = log_probs.topk(beam_size)
+
+                    for i in range(beam_size):
+                        next_seq = torch.cat([seq, topk_idx[i].unsqueeze(0)])
+                        new_score = score + topk_probs[i].item()
+                        all_candidates.append((next_seq, new_score))
+
+                # 选 top beam_size 条路径
+                beams = sorted(all_candidates, key=lambda x: x[1], reverse=True)[:beam_size]
+
+                if all(seq[-1].item() == eos_idx for seq, _ in beams):
+                    finished.extend(beams)
+                    break
+
+            # 最终选择得分最高的完成序列
+            candidates = finished if finished else beams
+            best_seq = sorted(candidates, key=lambda x: x[1], reverse=True)[0][0]
+            sequences[b] = best_seq
+
+        # pad 到相同长度
+        padded = torch.nn.utils.rnn.pad_sequence(sequences, batch_first=True, padding_value=pad_idx)
+        return padded
+
+
+
 
 # ref: https://github.com/bytedance/Protenix/blob/main/protenix/model/modules/primitives.py
 def _attention(
@@ -115,7 +163,7 @@ class MultiHeadAttention(nn.Module):
         self.head_dim = embed_dim // n_heads
         self.n_heads = n_heads
         self.embed_dim = embed_dim
-        self.scale = embed_dim ** 0.5
+        self.scale = self.head_dim ** 0.5
         self.dropout_ratio = dropout
 
         self.keys = nn.Linear(embed_dim, embed_dim)
@@ -196,7 +244,7 @@ class Encoder(nn.Module):
         self.device = device
         self.scale = embed_dim ** 0.5
         self.tok_emb = nn.Embedding(vocab_size, embed_dim)
-        self.pos_emb = nn.Embedding(max_length, embed_dim)
+        self.pos_emb = PositionalEncoding(emb_dim=embed_dim, max_len=max_length)
         self.blocks = nn.ModuleList([EncoderLayer(embed_dim, n_heads, ff_hid_dim, dropout)] * n_blocks)
         self.dropout = nn.Dropout(dropout)
 
@@ -205,7 +253,11 @@ class Encoder(nn.Module):
         positions = torch.arange(0, seq_len).expand(N, seq_len).to(self.device)
         pos_embeddings = self.pos_emb(positions)
         tok_embeddings = self.tok_emb(src.long()) * self.scale
-        out = self.dropout(pos_embeddings + tok_embeddings)
+        try:
+            out = self.dropout(pos_embeddings + tok_embeddings)
+        except:
+            print(tok_embeddings.shape, pos_embeddings.shape)
+            import pdb; pdb.set_trace()
 
         for block in self.blocks:
             out = block(out, mask, use_efficient_attn)
@@ -245,7 +297,7 @@ class Decoder(nn.Module):
         self.device = device
         self.scale = embed_dim ** 0.5
         self.tok_embedding = nn.Embedding(vocab_size, embed_dim)
-        self.pos_embedding = nn.Embedding(max_length, embed_dim)
+        self.pos_embedding = PositionalEncoding(emb_dim=embed_dim, max_len=max_length)
         self.dropout = nn.Dropout(dropout)
         self.blocks = nn.ModuleList([DecoderLayer(embed_dim, n_heads, ff_hid_dim, dropout)] * n_blocks)
         self.fc = nn.Linear(embed_dim, vocab_size)
@@ -262,5 +314,25 @@ class Decoder(nn.Module):
 
         output = self.fc(trg)
         return output
+    
+# ref: https://github.com/jadore801120/attention-is-all-you-need-pytorch/blob/master/transformer/Models.py
+class PositionalEncoding(nn.Module):
+    def __init__(self, emb_dim, max_len=5000):
+        super(PositionalEncoding, self).__init__()
+        pe = torch.zeros(max_len, emb_dim)
+        position = torch.arange(0, max_len, dtype=torch.float32).unsqueeze(1)  # shape (max_len, 1)
+        div_term = torch.exp(torch.arange(0, emb_dim, 2).float() * (-math.log(10000.0) / emb_dim))  # shape (d_model/2)
+
+        pe[:, 0::2] = torch.sin(position * div_term)
+        pe[:, 1::2] = torch.cos(position * div_term)
+
+        pe = pe.unsqueeze(0)
+        self.register_buffer('pe', pe)
+
+    def forward(self, x):
+        return self.pe[:, :x.size(1), :]    # [max_len, (1 broadcast to bz), d_model]
+    
+
+
 
 
