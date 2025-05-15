@@ -191,7 +191,7 @@ def train_func(args):
     save_checkpoint = get_save_func(args, model)
     gradient_checker = GradientChecker(model, verbose=True, raise_on_nan=False)
     if device == 0:
-        save_checkpoint(0)
+        save_checkpoint(cur_step=0, best_indicator=best_indicator)
 
     # begin training
     for epoch in range(args.epochs):
@@ -229,18 +229,20 @@ def train_func(args):
             # gradients update
             scaler.step(scheduled_optim.get_optim())
             scaler.update()
-            scheduled_optim.step_and_update_lr()
+            scheduled_optim.step()
             batch_end_time = time.time()
-
             # logger information
-            torch.distributed.barrier()
-            logger.info(f'optim step = {scheduled_optim.get_step()} \
-                         lr = {scheduled_optim.get_lr()} loss = {round(loss.item(), 4)}')
-            logger.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
+            torch.distributed.barrier(device_ids=[int(x) for x in args.gpu_list])
+            logger.info(f'optim step = {scheduled_optim.get_step()} '
+                        f'lr = {scheduled_optim.get_lr()} '
+                        f'loss = {round(loss.item(), 4)}')
+            logger.info(f'Epoch [{epoch+1}/{args.epochs}] '
+                        f'Batch [{batch+1}/{all_batch_length}] '
+                        f'time {round(batch_end_time - batch_start_time, 4)} s.')
             
         # save checkpoints by interval
         if (epoch % args.save_interval == 0 or epoch == args.epochs) and device == 0:
-            save_checkpoint(scheduled_optim.get_step())
+            save_checkpoint(cur_step=scheduled_optim.get_step(), best_indicator=best_indicator)
         # eval by interval
         if (args.eval and epoch % args.eval_interval == 0) or epoch == args.epochs - 1:
             if device == 0:
@@ -250,7 +252,7 @@ def train_func(args):
 
                 if acc > best_indicator:
                     best_indicator = acc
-                    save_checkpoint(scheduled_optim.get_step(), best=True)
+                    save_checkpoint(cur_step=scheduled_optim.get_step(), best_indicator=best_indicator, best=True)
 
         
                 
