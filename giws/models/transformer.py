@@ -4,9 +4,10 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-from typing import Optional
 from einops import rearrange
 import math
+
+from giws.models.ops import _attention
 
 class Transformer(nn.Module):
     def __init__(self,
@@ -104,59 +105,6 @@ class Transformer(nn.Module):
 
 
 
-# ref: https://github.com/bytedance/Protenix/blob/main/protenix/model/modules/primitives.py
-def _attention(
-    q: torch.Tensor,
-    k: torch.Tensor,
-    v: torch.Tensor,
-    attn_bias: Optional[torch.Tensor] = None,
-    use_efficient_implementation: bool = False,
-    attn_weight_dropout_p: float = 0.0,
-    inplace_safe: bool = False,
-) -> torch.Tensor:
-    """Attention.
-
-    Args:
-        q (torch.Tensor): query tensor of shape [..., n_q, d]
-        k (torch.Tensor): key tensor of shape [..., n_kv, d]
-        v (torch.Tensor): value tensor of shape[..., n_kv, d]
-        attn_bias (torch.Tensor, optional): attention bias tensor of shape [..., n_q, n_kv]. Defaults to None.
-        use_efficient_implementation (bool): whether to use the torch.nn.functional.scaled_dot_product_attention, Defaults to False.
-        attn_weight_dropout_p (float): Dropout probability; if greater than 0.0, dropout is applied, Defaults to 0.0.
-
-    Returns:
-        torch.Tensor: output of tensor [..., n_q, d]
-    """
-    assert k.shape == v.shape
-    if use_efficient_implementation:
-        attn_output = F.scaled_dot_product_attention(
-            query=q,
-            key=k,
-            value=v,
-            attn_mask=attn_bias,
-            dropout_p=attn_weight_dropout_p,
-        )
-        return attn_output
-    # [..., n_kv, d] -> [..., d, n_kv]
-    k = k.transpose(-1, -2)
-
-    # [..., n_q, d], [..., d, n_kv] -> [..., n_q, n_kv]
-    attn_weights = q @ k
-
-    if attn_bias is not None:
-        if inplace_safe:
-            attn_weights += attn_bias
-        else:
-            attn_weights = attn_weights + attn_bias
-
-    # [..., n_q, n_kv]
-    attn_weights = F.softmax(attn_weights, dim=-1)
-
-    # [..., n_q, n_kv], [..., n_kv, d] -> [..., n_q, d]
-    attn_output = attn_weights @ v
-
-    return attn_output
-
 class MultiHeadAttention(nn.Module):
     def __init__(self, embed_dim, n_heads, dropout):
         super().__init__()
@@ -166,34 +114,16 @@ class MultiHeadAttention(nn.Module):
         self.scale = self.head_dim ** 0.5
         self.dropout_ratio = dropout
 
-        self.keys = nn.Linear(embed_dim, embed_dim)
-        self.queries = nn.Linear(embed_dim, embed_dim)
-        self.values = nn.Linear(embed_dim, embed_dim)
+        self.qkv_proj = nn.Linear(embed_dim, embed_dim * 3, bias = False)
+
         self.proj = nn.Linear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, q, k, v, mask=None, 
+    def forward(self, x, mask=None, 
                 use_efficient_implementation=False):
-        N = q.size(0)          # batch_size
-        Q = self.queries(q)    # shape: [N, query_len, embed_dim]
-        K = self.keys(k)       # shape: [N, key_len, embed_dim]
-        V = self.values(v)     # shape: [N, value_len, embed_dim]
-
-        Q = Q.view(N, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)  # shape: [N, n_heads, query_len, head_dim]
-        K = K.view(N, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)  # shape: [N, n_heads, key_len, head_dim]
-        V = V.view(N, -1, self.n_heads, self.head_dim).permute(0, 2, 1, 3)  # shape: [N, n_heads, value_len, head_dim]
-
-        # Naive implementation
-        # energy = (Q @ K.permute(0, 1, 3, 2)) / self.scale # [N, n_heads, key_len, query_len]
-        # if mask is not None:
-        #     energy = energy.masked_fill(mask == 0, torch.finfo(Q.dtype).min)
-
-        # attention = energy.softmax(-1)           # shape: [N, n_heads, query_len, key_len]
-        # x = self.dropout(attention) @ V          # shape: [N, n_heads, query_len, key_len]
-        # x = x.permute(0, 2, 1, 3).contiguous()   # shape: [N, query_len, n_heads, head_dim]
-        # x = x.view(N, -1, self.embed_dim)        # shape: [N, query_len, embed_dim]
-        # x = self.proj(x)
-        # return x
+        N = x.size(0)          # batch_size
+        qkv = self.qkv_proj(x).chunk(3, dim = -1)    # shape: [N, query_len, 3 * embed_dim]
+        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv)
 
         # broadcast to [B, N_q, N_kv]
         attn_bias = None
@@ -203,9 +133,9 @@ class MultiHeadAttention(nn.Module):
             attn_bias = (1.0 - attn_bias) * -1e9      # padding -> -1e9， real token -> 0
 
         out = _attention(
-                q=Q,
-                k=K,
-                v=V,
+                q=q,
+                k=k,
+                v=v,
                 attn_bias=attn_bias,
                 use_efficient_implementation=use_efficient_implementation,
                 attn_weight_dropout_p=self.dropout_ratio,
@@ -231,7 +161,7 @@ class EncoderLayer(nn.Module):
         self.norm2 = nn.LayerNorm(embed_dim)
 
     def forward(self, src, mask, use_efficient_attn=False):
-        attention = self.attention(src, src, src, mask, use_efficient_attn)
+        attention = self.attention(src, mask, use_efficient_attn)
         x = self.norm1(attention + self.dropout(src))
         out = self.mlp(x)
         out = self.norm2(out + self.dropout(x))

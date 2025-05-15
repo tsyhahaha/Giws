@@ -99,7 +99,7 @@ def train_func(args):
     # loss and optimizer
     scaler = GradScaler(enabled=amp_enabled)
     context = autocast('cuda') if amp_enabled  else nullcontext()
-    optimizer = optim.AdamW(model.parameters(), args.lr)
+    optimizer = optim.AdamW(model.parameters(), args.lr, weight_decay=3e-4)
     scheduler = ConstantLR(optimizer, factor=1.)
     max_grad_norm = args.get('clip_grad_value', 1.0)
     all_batch_length = len(train_dataloader) 

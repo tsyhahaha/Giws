@@ -11,14 +11,14 @@ data_path: ../data
 
 # ref: https://github.com/kentaroy47/vision-transformers-cifar10/blob/main/train_cifar10.py
 epochs: 500
-batch_size: 512
-lr: 1e-4
+batch_size: 256
+lr: 3e-4
 # gradients
-clip_grad: true
+clip_grad: false
 clip_mode: "norm"
 clip_grad_value: 1.0
 # amp
-amp_enabled: true
+amp_enabled: false
 
 
 # eval
