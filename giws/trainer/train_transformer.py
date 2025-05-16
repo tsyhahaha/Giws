@@ -7,7 +7,6 @@ from torch.utils.data.distributed import DistributedSampler
 from torch.amp import GradScaler, autocast
 from contextlib import nullcontext
 
-from nltk.translate.bleu_score import corpus_bleu
 
 import os
 import time
@@ -32,7 +31,7 @@ def cal_performance(pred, gold, trg_pad_idx, smoothing=False):
 
     pred = pred.view(-1, pred.size(-1))
 
-    loss = loss = F.cross_entropy(
+    loss = F.cross_entropy(
                     pred,
                     gold,
                     ignore_index=trg_pad_idx,
@@ -140,7 +139,7 @@ def test(model, validation_data, device, pad_idx=[0,0]):
             n_word_correct += n_correct
             total_loss += loss.item()
 
-    loss_per_word = total_loss/n_word_total
+    loss_per_word = total_loss/n_word_total # log(perplexity)
     accuracy = n_word_correct/n_word_total
     return loss_per_word, accuracy
 
@@ -194,7 +193,7 @@ def train_func(args):
         save_checkpoint(cur_step=0, best_indicator=best_indicator)
 
     # begin training
-    for epoch in range(args.epochs):
+    for epoch in range(1, args.epochs+1):
         for batch, encoded_input in enumerate(train_dataloader):
             scheduled_optim.zero_grad()
             batch_start_time = time.time()
@@ -232,11 +231,10 @@ def train_func(args):
             scheduled_optim.step()
             batch_end_time = time.time()
             # logger information
-            torch.distributed.barrier(device_ids=[int(x) for x in args.gpu_list])
             logger.info(f'optim step = {scheduled_optim.get_step()} '
                         f'lr = {scheduled_optim.get_lr()} '
                         f'loss = {round(loss.item(), 4)}')
-            logger.info(f'Epoch [{epoch+1}/{args.epochs}] '
+            logger.info(f'Epoch [{epoch}/{args.epochs}] '
                         f'Batch [{batch+1}/{all_batch_length}] '
                         f'time {round(batch_end_time - batch_start_time, 4)} s.')
             
@@ -246,13 +244,16 @@ def train_func(args):
         # eval by interval
         if (args.eval and epoch % args.eval_interval == 0) or epoch == args.epochs - 1:
             if device == 0:
-                logger.info(f'Epoch [{epoch+1}/{args.epochs}] Beginning to test......')
+                logger.info(f'Epoch [{epoch}/{args.epochs}] Beginning to test......')
                 val_loss, acc = test(model, test_dataloader, device)
-                logger.info(f'Epoch [{epoch+1}/{args.epochs}] Test finished, loss: {val_loss}, acc: {acc}')
+                perplexity = torch.exp(torch.tensor(val_loss))
+                logger.info(f'Epoch [{epoch}/{args.epochs}] Test finished, perplexity: {perplexity}, loss: {val_loss}, acc: {acc}')
 
                 if acc > best_indicator:
                     best_indicator = acc
                     save_checkpoint(cur_step=scheduled_optim.get_step(), best_indicator=best_indicator, best=True)
+                    
+            model.train()
 
         
                 
