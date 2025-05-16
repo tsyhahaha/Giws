@@ -12,13 +12,13 @@ data_path: ../data/tang.npz
 # training
 epochs: 50
 batch_size: 256
-lr: 1e-3
+lr: 3e-4
 # gradients
 clip_grad: true
 clip_mode: "norm"
 clip_grad_value: 1.0
 # amp
-amp_enabled: true
+amp_enabled: false
 
 
 # eval

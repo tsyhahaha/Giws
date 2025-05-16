@@ -1,8 +1,8 @@
 import torch
 import torch.nn.functional as F
 import torch.optim as optim
-from torch.optim.lr_scheduler import CosineAnnealingLR
-from torch.utils.data import DataLoader
+from torch.optim.lr_scheduler import ConstantLR
+from torch.utils.data import DataLoader, TensorDataset, random_split
 
 import os
 import time
@@ -25,39 +25,61 @@ def setup_model(args):
 def setup_dataset(args):
     data_path = args.get("data_path", None)
     assert data_path is not None, "Please specify the data path in the configuration file"
+
     datas = np.load(data_path, allow_pickle=True)
     data = torch.from_numpy(datas['data'])
+
     ix2word = datas['ix2word'].item()
     word2ix = datas['word2ix'].item()
 
     logger.info(f"Vocab size: {len(word2ix)}")
 
-    train_loader = DataLoader(data, 
-                            batch_size=args.batch_size,
-                            shuffle=True,
-                            num_workers=2)
+    dataset = TensorDataset(data)
 
+    train_ratio = args.get("train_ratio", 0.9)
+    train_size = int(len(dataset) * train_ratio)
+    test_size = len(dataset) - train_size
 
-    return train_loader, None
+    train_dataset, test_dataset = random_split(dataset, [train_size, test_size])
 
-def test(model, device, test_loader):
-    if test_loader is None:
-        return np.nan
+    train_loader = DataLoader(train_dataset,
+                              batch_size=args.batch_size,
+                              shuffle=True,
+                              num_workers=2)
+
+    test_loader = DataLoader(test_dataset,
+                             batch_size=args.batch_size,
+                             shuffle=False,
+                             num_workers=2)
+
+    return train_loader, test_loader
+
+@torch.no_grad()
+def test(model, device, test_dataloader):
     model.eval()
-    test_loss = 0
-    correct = 0
-    with torch.no_grad():
-        for data, target in test_loader:
-            data, target = data.to(device), target.to(device)
-            output = model(data)
-            test_loss += F.nll_loss(output, target, reduction='sum').item()
-            pred = output.argmax(dim=1)
-            correct += pred.eq(target).sum().item()
+    total_correct = 0
+    total_count = 0
 
-    test_loss /= len(test_loader.dataset)
-    accuracy = 100. * correct / len(test_loader.dataset)
-    print(f'\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} ({accuracy:.2f}%)\n')
+    for batch in test_dataloader:
+        data = batch[0].long().transpose(1, 0).contiguous().to(device)  # [seq_len, batch_size]
+        input_ids, target = data[:-1, :], data[1:, :]   # Predict next token
+
+        output = model(input_ids)   # output: [seq_len-1, batch_size, vocab_size]
+        logits = output[0] if isinstance(output, tuple) else output # unpack if needed
+
+        pred = logits.argmax(dim=-1)    # [seq_len-1, batch_size]
+
+        correct = (pred == target).sum().item()
+        total = target.numel()
+
+        total_correct += correct
+        total_count += total
+
+    accuracy = total_correct / total_count
+    logger.info(f"Test Accuracy: {round(accuracy * 100, 3)}%")
+
     return accuracy
+
 
 def train_func(args):
     device = args.gpu_id
@@ -66,7 +88,7 @@ def train_func(args):
 
     # loss and optimizer
     optimizer = optim.AdamW(model.parameters(), args.lr)
-    scheduler = CosineAnnealingLR(optimizer, T_max=args.epochs)
+    scheduler = ConstantLR(optimizer, factor=1.)
     max_grad_norm = args.get('clip_grad_value', 1.0)
     all_batch_length = len(train_dataloader) 
 
@@ -95,12 +117,11 @@ def train_func(args):
     # save initial model
     save_checkpoint(0)
 
-    for epoch in range(args.epochs):
+    for epoch in range(1, args.epochs+1):
         optimizer.zero_grad()
         for batch, data in enumerate(train_dataloader):
             batch_start_time = time.time()
-            data = data.long().transpose(1,0).contiguous()
-            data = data.to(device)
+            data = data[0].long().transpose(1,0).contiguous().to(device)
             input_ids, target = data[:-1,:], data[1:,:]
             # forward/backward propagation
             output = model(input_ids)
@@ -116,7 +137,7 @@ def train_func(args):
         
             batch_end_time = time.time()
             logger.info(f'optim step = {cur_step+1} loss = {round(loss.item(), 4)}')
-            logger.info(f'Epoch [{epoch+1}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
+            logger.info(f'Epoch [{epoch}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
             cur_step += 1
         scheduler.step()
 
@@ -124,8 +145,10 @@ def train_func(args):
         if epoch % args.save_interval == 0 or epoch == args.epochs:
             save_checkpoint(cur_step)
         # eval by epoch interval
-        if (args.eval and epoch % args.eval_interval == 0 and device==0) or epoch == args.epochs - 1:
-            logger.info(f'Epoch [{epoch+1}/{args.epochs}] Begin to test......')
+        if (args.eval and epoch % args.eval_interval == 0 and \
+                test_dataloader is not None) \
+                or epoch == args.epochs:
+            logger.info(f'Epoch [{epoch}/{args.epochs}] Begin to test......')
             ave_accuracy = test(model, device, test_dataloader)
             if ave_accuracy > best_acc:
                 save_checkpoint(cur_step, best=True)
