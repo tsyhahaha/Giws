@@ -86,19 +86,16 @@ class Transformer(nn.Module):
                         new_score = score + topk_probs[i].item()
                         all_candidates.append((next_seq, new_score))
 
-                # 选 top beam_size 条路径
                 beams = sorted(all_candidates, key=lambda x: x[1], reverse=True)[:beam_size]
 
                 if all(seq[-1].item() == eos_idx for seq, _ in beams):
                     finished.extend(beams)
                     break
 
-            # 最终选择得分最高的完成序列
             candidates = finished if finished else beams
             best_seq = sorted(candidates, key=lambda x: x[1], reverse=True)[0][0]
             sequences[b] = best_seq
 
-        # pad 到相同长度
         padded = torch.nn.utils.rnn.pad_sequence(sequences, batch_first=True, padding_value=pad_idx)
         return padded
 
@@ -114,16 +111,20 @@ class MultiHeadAttention(nn.Module):
         self.scale = self.head_dim ** 0.5
         self.dropout_ratio = dropout
 
-        self.qkv_proj = nn.Linear(embed_dim, embed_dim * 3, bias = False)
+        self.q_proj = nn.Linear(embed_dim, embed_dim, bias = False)
+        self.kv_proj = nn.Linear(embed_dim, embed_dim * 2, bias = False)
 
         self.proj = nn.Linear(embed_dim, embed_dim)
         self.dropout = nn.Dropout(dropout)
 
-    def forward(self, x, mask=None, 
+    def forward(self, q_layer, kv_layer, mask=None, 
                 use_efficient_implementation=False):
-        N = x.size(0)          # batch_size
-        qkv = self.qkv_proj(x).chunk(3, dim = -1)    # shape: [N, query_len, 3 * embed_dim]
-        q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv)
+        N = q_layer.size(0)          # batch_size
+        q = self.q_proj(q_layer)
+        kv = self.kv_proj(kv_layer).chunk(2, dim = -1)
+
+        q = rearrange(q, 'b n (h d) -> b h n d', h = self.n_heads)
+        k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.n_heads), kv)
 
         # broadcast to [B, N_q, N_kv]
         attn_bias = None
@@ -161,7 +162,7 @@ class EncoderLayer(nn.Module):
         self.norm2 = nn.LayerNorm(embed_dim)
 
     def forward(self, src, mask, use_efficient_attn=False):
-        attention = self.attention(src, mask, use_efficient_attn)
+        attention = self.attention(src, src, mask, use_efficient_attn)
         x = self.norm1(attention + self.dropout(src))
         out = self.mlp(x)
         out = self.norm2(out + self.dropout(x))
@@ -183,11 +184,7 @@ class Encoder(nn.Module):
         positions = torch.arange(0, seq_len).expand(N, seq_len).to(self.device)
         pos_embeddings = self.pos_emb(positions)
         tok_embeddings = self.tok_emb(src.long()) * self.scale
-        try:
-            out = self.dropout(pos_embeddings + tok_embeddings)
-        except:
-            print(tok_embeddings.shape, pos_embeddings.shape)
-            import pdb; pdb.set_trace()
+        out = self.dropout(pos_embeddings + tok_embeddings)
 
         for block in self.blocks:
             out = block(out, mask, use_efficient_attn)
@@ -212,9 +209,9 @@ class DecoderLayer(nn.Module):
         self.dropout = nn.Dropout(dropout)
 
     def forward(self, trg, src, trg_mask, src_mask, use_efficient_attn=False):
-        trg_attention = self.self_attention(trg, trg, trg, trg_mask, use_efficient_attn)
+        trg_attention = self.self_attention(trg, trg, trg_mask, use_efficient_attn)
         trg = self.norm1(trg + self.dropout(trg_attention))
-        joint_attention = self.joint_attention(trg, src, src, src_mask, use_efficient_attn)
+        joint_attention = self.joint_attention(trg, src, src_mask, use_efficient_attn)
         trg = self.norm2(trg + self.dropout(joint_attention))
         out = self.mlp(trg)
         out = self.norm3(trg + self.dropout(out))

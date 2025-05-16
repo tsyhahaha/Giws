@@ -25,7 +25,7 @@ clip_grad: true
 clip_mode: "norm"
 clip_grad_value: 1.0
 # amp
-amp_enabled: true
+amp_enabled: false
 
 # model specific
 use_efficient_attn: true
