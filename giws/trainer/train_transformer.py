@@ -15,7 +15,7 @@ from functools import partial
 
 import giws.utils.ddp_utils as ddp_utils
 from giws.optim import (
-    TransformerScheduledOptim,
+    CustomScheduledOptim,
 )
 from giws.utils import(
     GradientChecker,
@@ -53,15 +53,31 @@ def patch_trg(trg):
 
 def setup_model(args):
     device = ddp_utils.get_device(args.gpu_list) if args.use_gpu else 'cpu'
-    model = Transformer(
-        **args.model, 
-        max_length=args.max_len,
-        device=device,
-    )
+    
+    extra_cfg = None
+    if args.get('model_path', None) is not None:
+        save_info = torch.load('args.model_path', map_location='cpu')
+        model = Transformer(
+            **save_info['cfg'],
+            max_length=args.max_len,
+            device=device,
+        )
+        model.load_state_dict(save_info["model"])
+        extra_cfg = dict(
+            cur_step = save_info['train_steps'],
+            best_indicator = save_info['best_indicator'],
+        )
+    else:
+        model = Transformer(
+            **args.model, 
+            max_length=args.max_len,
+            device=device,
+        )
+
     model.to(device)
     logger.info(model)
     logger.info('Model setup finish')
-    return model
+    return model, extra_cfg
 
 def collate_fn(batch):
     processed_batch = {}
@@ -144,22 +160,22 @@ def test(model, validation_data, device, pad_idx=[0,0]):
     return loss_per_word, accuracy
 
 def get_save_func(args, model):
-    def save_checkpoint(args, model, cur_step, best_indicator, best=False):
+    def save_checkpoint(args, model, cur_epoch, cur_step, best_indicator, best=False):
         ckpt_dir = os.path.join(args.output_dir, 'checkpoints')
         if not os.path.exists(ckpt_dir):
             os.makedirs(ckpt_dir)
         
         save_info = dict(
             model = model.state_dict(),
-            cfg=args,
+            cfg=args.model,
             train_steps=cur_step,
             best_indicator=best_indicator
         )
         if not best:
-            ckpt_file = os.path.join(ckpt_dir, f'checkpoint_step_{cur_step}.ckpt')
+            ckpt_file = os.path.join(ckpt_dir, f'checkpoint_epoch_{cur_epoch}.ckpt')
         else:
             save_info['best_indicator'] = best_indicator
-            ckpt_file = os.path.join(ckpt_dir, f'best_checkpoint.ckpt')
+            ckpt_file = os.path.join(ckpt_dir, f'best_checkpoint_epoch_{cur_epoch}.ckpt')
         torch.save(save_info, ckpt_file)
     return partial(save_checkpoint, args=args, model=model)
 
@@ -167,7 +183,7 @@ def get_save_func(args, model):
 def train_func(args):
     # model setup
     device = ddp_utils.get_device(args.gpu_list) if args.use_gpu else 'cpu'
-    model = setup_model(args)
+    model, extra_cfg = setup_model(args)    # extra_cfg: cfg for warm start
     model.train()
 
     # dataset setup
@@ -178,19 +194,22 @@ def train_func(args):
     amp_enabled = args.get("amp_enabled", False)
     scaler = GradScaler(enabled=amp_enabled)
     context = autocast('cuda') if amp_enabled  else nullcontext()
-    scheduled_optim = TransformerScheduledOptim(optim.Adam(model.parameters(), betas=(0.9, 0.98), eps=1e-09), 
-                               lr_mul=args.get('lr_mul', 1.),
-                               d_model=args.model.embed_dim,
-                                n_warmup_steps=args.warmup_steps)
+    scheduled_optim = CustomScheduledOptim(
+        optim.AdamW(model.parameters(), betas=(0.9, 0.98), eps=1e-08, weight_decay=args.get('weight_decay', 0.0)), 
+        lr_mul=args.get('lr_mul', 1.),
+        d_model=args.model.embed_dim,
+        n_warmup_steps=args.warmup_steps
+    )
     max_grad_norm = args.get('clip_grad_value', 1.0)
     all_batch_length = len(train_dataloader)
 
     # initialization
-    best_indicator = 0
+    best_indicator = 0 if extra_cfg is None else extra_cfg['best_indicator']
     save_checkpoint = get_save_func(args, model)
     gradient_checker = GradientChecker(model, verbose=True, raise_on_nan=False)
     if device == 0:
-        save_checkpoint(cur_step=0, best_indicator=best_indicator)
+        save_checkpoint(cur_step=0, cur_epoch=0, best_indicator=best_indicator)
+
 
     # begin training
     for epoch in range(1, args.epochs+1):
@@ -240,18 +259,19 @@ def train_func(args):
             
         # save checkpoints by interval
         if (epoch % args.save_interval == 0 or epoch == args.epochs) and device == 0:
-            save_checkpoint(cur_step=scheduled_optim.get_step(), best_indicator=best_indicator)
+            save_checkpoint(cur_epoch=epoch, cur_step=scheduled_optim.get_step(), best_indicator=best_indicator)
+        
         # eval by interval
-        if (args.eval and epoch % args.eval_interval == 0) or epoch == args.epochs - 1:
+        if (args.eval and epoch % args.eval_interval == 0) or epoch == args.epochs:
             if device == 0:
                 logger.info(f'Epoch [{epoch}/{args.epochs}] Beginning to test......')
                 val_loss, acc = test(model, test_dataloader, device)
-                perplexity = torch.exp(torch.tensor(val_loss))
-                logger.info(f'Epoch [{epoch}/{args.epochs}] Test finished, perplexity: {perplexity}, loss: {val_loss}, acc: {acc}')
+                perplexity = torch.exp(torch.tensor(val_loss)).item()
+                logger.info(f'Epoch [{epoch}/{args.epochs}] Test finished, perplexity: {round(perplexity,4)}, loss: {round(val_loss, 4)}, acc: {round(acc, 3)}')
 
                 if acc > best_indicator:
                     best_indicator = acc
-                    save_checkpoint(cur_step=scheduled_optim.get_step(), best_indicator=best_indicator, best=True)
+                    save_checkpoint(cur_epoch=epoch, cur_step=scheduled_optim.get_step(), best_indicator=best_indicator, best=True)
                     
             model.train()
 

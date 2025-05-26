@@ -68,7 +68,6 @@ def test(model, device, test_dataloader):
         logits = output[0] if isinstance(output, tuple) else output # unpack if needed
 
         pred = logits.argmax(dim=-1)    # [seq_len-1, batch_size]
-
         correct = (pred == target).sum().item()
         total = target.numel()
 
@@ -76,8 +75,7 @@ def test(model, device, test_dataloader):
         total_count += total
 
     accuracy = total_correct / total_count
-    logger.info(f"Test Accuracy: {round(accuracy * 100, 3)}%")
-
+    model.train()
     return accuracy
 
 
@@ -124,8 +122,8 @@ def train_func(args):
             data = data[0].long().transpose(1,0).contiguous().to(device)
             input_ids, target = data[:-1,:], data[1:,:]
             # forward/backward propagation
-            output = model(input_ids)
-            loss = F.cross_entropy(output[0], target.view(-1))
+            logits = model(input_ids)[0]
+            loss = F.cross_entropy(logits.view(-1, logits.size(-1)), target.view(-1))
             loss.backward()
             
             # gradients clip
@@ -145,11 +143,13 @@ def train_func(args):
         if epoch % args.save_interval == 0 or epoch == args.epochs:
             save_checkpoint(cur_step)
         # eval by epoch interval
-        if (args.eval and epoch % args.eval_interval == 0 and \
-                test_dataloader is not None) \
-                or epoch == args.epochs:
+        if args.eval and (epoch % args.eval_interval == 0 and \
+                test_dataloader is not None \
+                or epoch == args.epochs):
             logger.info(f'Epoch [{epoch}/{args.epochs}] Begin to test......')
             ave_accuracy = test(model, device, test_dataloader)
+            logger.info(f"Test Accuracy: {round(ave_accuracy * 100, 3)}%")
+
             if ave_accuracy > best_acc:
                 save_checkpoint(cur_step, best=True)
                 best_acc = ave_accuracy

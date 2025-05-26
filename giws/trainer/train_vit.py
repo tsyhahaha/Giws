@@ -86,7 +86,7 @@ def test(model, device, test_loader):
 
     test_loss /= len(test_loader.dataset)
     accuracy = 100. * correct / len(test_loader.dataset)
-    logger.info(f'\nTest set: Average loss: {test_loss:.4f}, Accuracy: {correct}/{len(test_loader.dataset)} ({accuracy:.2f}%)\n')
+    logger.info(f'\nTest set: test_loss = {test_loss:.4f}, test_accuracy = {correct}/{len(test_loader.dataset)} ({accuracy:.2f}%)\n')
     return accuracy
 
 def train_func(args):

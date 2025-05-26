@@ -1,7 +1,8 @@
 from giws.optim.base import BaseScheduledOptim
 import math
 
-class TransformerScheduledOptim(BaseScheduledOptim):
+class CustomScheduledOptim(BaseScheduledOptim):
+    """Ref: Attention is all you need."""
     def __init__(self, optimizer, lr_mul, d_model, n_warmup_steps):
         super().__init__(optimizer)
         self.lr_mul = lr_mul

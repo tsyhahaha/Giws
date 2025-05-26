@@ -36,16 +36,10 @@ class Attention(nn.Module):
         self.dropout_ratio = dropout
 
         self.heads = heads
-        self.scale = dim_head ** -0.5
-
         self.norm = nn.LayerNorm(dim)
 
-        self.attend = nn.Softmax(dim = -1)
-        self.dropout = nn.Dropout(dropout)
-
-        self.to_qkv = nn.Linear(dim, inner_dim * 3, bias = False)
-
-        self.to_out = nn.Sequential(
+        self.qkv_proj = nn.Linear(dim, inner_dim * 3, bias = False)
+        self.out_proj = nn.Sequential(
             nn.Linear(inner_dim, dim),
             nn.Dropout(dropout)
         ) if project_out else nn.Identity()
@@ -53,7 +47,7 @@ class Attention(nn.Module):
     def forward(self, x):
         x = self.norm(x)
 
-        qkv = self.to_qkv(x).chunk(3, dim = -1)
+        qkv = self.qkv_proj(x).chunk(3, dim = -1)
         q, k, v = map(lambda t: rearrange(t, 'b n (h d) -> b h n d', h = self.heads), qkv)
 
         attn_bias = None
@@ -67,7 +61,7 @@ class Attention(nn.Module):
             )
 
         out = rearrange(out, 'b h n d -> b n (h d)')
-        return self.to_out(out)
+        return self.out_proj(out)
 
 class Transformer(nn.Module):
     def __init__(self, dim, depth, heads, dim_head, mlp_dim, dropout = 0.):

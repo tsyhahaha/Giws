@@ -1,6 +1,8 @@
 import torch
 import torch.nn as nn
 
+from einops import rearrange
+
 class PoetryModel(nn.Module):
     def __init__(self, vocab_size, embedding_dim, hidden_dim, num_layers):
         super(PoetryModel, self).__init__()
@@ -24,4 +26,5 @@ class PoetryModel(nn.Module):
         embeds = self.embeddings(input_ids)
         output, hidden = self.lstm(embeds, (h_0, c_0))
         logits = self.linear(output.view(seq_len * batch_size, -1))
+        logits = rearrange(logits, '(s b) v -> s b v', b=batch_size)
         return logits, hidden
