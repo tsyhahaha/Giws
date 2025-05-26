@@ -1,18 +1,9 @@
 import re
 import os
-import matplotlib.pyplot as plt
+import argparse
 import matplotlib as mpl
-
+import matplotlib.pyplot as plt
 from datetime import datetime
-
-log_folder = "/mnt/user/taosiyuan/projects/Giws/trainer_output/transformer/"
-
-re_pattern = r"loss\s*=\s*([\d.]+)"
-target_name = 'loss'.capitalize()
-# re_pattern = r"lr\s*=\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)"
-# target_name = 'lr'.capitalize()
-re_pattern = r"bleu score:\s*(-?\d+(?:\.\d+)?(?:e[+-]?\d+)?)"
-target_name = 'bleu score'.capitalize()
 
 
 plt.switch_backend('agg')
@@ -30,7 +21,17 @@ plt.rcParams['lines.linewidth'] = 1.5
 plt.rcParams['savefig.dpi'] = 200.0
 
 
-def find_latest_date_folder(parent_dir):
+
+def parse():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--log_folder", type=str, default="/mnt/user/taosiyuan/projects/Giws/trainer_output/")
+    parser.add_argument("--model", type=str, default="transformer")
+    parser.add_argument("--target_name", type=str, default="loss")
+    parser.add_argument('--offset', type=int, default=0)
+    return parser.parse_args()
+
+
+def find_latest_date_folder_by_offset(parent_dir, offset):
     if not os.path.exists(parent_dir):
         raise FileNotFoundError(f"parent folder doesn't exist: {parent_dir}")
     
@@ -52,9 +53,9 @@ def find_latest_date_folder(parent_dir):
         return None
     
     date_folders_sorted = sorted(date_folders, key=lambda x: x[0], reverse=True)
-    latest_folder = date_folders_sorted[0][1]
+    latest_folder_by_offset = date_folders_sorted[offset][1]
     
-    return os.path.join(parent_dir, latest_folder)
+    return os.path.join(parent_dir, latest_folder_by_offset)
 
 def extract_logs(root_path):
     result = []
@@ -67,32 +68,44 @@ def extract_logs(root_path):
     return result
 
 
-log_folder = find_latest_date_folder(log_folder)
-print(f"find latest log folder: {log_folder}")
-logs = extract_logs(log_folder)
-text = dict()
-target = dict()
+def main(args):
+    target_name = str(args.target_name).capitalize()
+    root_folder = os.path.join(args.log_folder, args.model)
+    re_pattern = rf'{args.target_name}\s*:\s*(-?\d+\.?\d*(?:[eE][-+]?\d+)?)%?'
+    print(f"re_pattern: {re_pattern}")
 
-for name, path in enumerate(logs):
-    with open(path, 'r') as f:
-        text[f'rank{name}'] = f.read()
+    log_folder = find_latest_date_folder_by_offset(root_folder, args.offset)
+    print(f"find latest log folder: {log_folder}")
+    logs = extract_logs(log_folder)
+    text = dict()
+    target = dict()
 
-for name in text.keys():
-    target[name] = re.findall(re_pattern, text[name])
-    target[name] = [float(value) for value in target[name]]
-del text
+    for name, path in enumerate(logs):
+        with open(path, 'r') as f:
+            text[f'rank{name}'] = f.read()
 
-colors = ['blue', 'red', 'darkorange', 'purple', 'black', 'cyan', 'lime', 'gold']
-for ids, name in enumerate(target.keys()):
-    plt.plot([i for i in range(len(target[name]))], target[name], color=colors[ids], label=name)
+    for name in text.keys():
+        import pdb;pdb.set_trace()
+        target[name] = re.findall(re_pattern, text[name])
+        target[name] = [float(value) for value in target[name]]
+    del text
 
-plt.legend(frameon=False, loc='upper right')
-plt.grid(linestyle='--')
+    colors = ['blue', 'red', 'darkorange', 'purple', 'black', 'cyan', 'lime', 'gold']
+    for ids, name in enumerate(target.keys()):
+        plt.plot([i for i in range(len(target[name]))], target[name], color=colors[ids], label=name)
 
-plt.ylabel(target_name)
-plt.legend()
-plt.title(f'{target_name} Over Time')
-plt.savefig('analysis/result.pdf',
-            format='pdf',
-            bbox_inches='tight',
-            pad_inches=0.01)
+    plt.legend(frameon=False, loc='upper right')
+    plt.grid(linestyle='--')
+
+    plt.ylabel(target_name)
+    plt.legend()
+    plt.title(f'{target_name} Over Time')
+    plt.savefig('analysis/result.pdf',
+                format='pdf',
+                bbox_inches='tight',
+                pad_inches=0.01)
+
+
+if __name__ == "__main__":
+    args = parse()
+    main(args)
