@@ -3,28 +3,28 @@ defaults:
 
 target: vit
 
+# custom
 gpu_id: 0
 seed: 42
 verbose: false
 
-data_path: ../data
-
+# training
 # ref: https://github.com/kentaroy47/vision-transformers-cifar10/blob/main/train_cifar10.py
+data_path: ../data
 epochs: 500
 batch_size: 256
 lr: 3e-4
-# gradients
+
+# gradients clip
 clip_grad: false
 clip_mode: "norm"
 clip_grad_value: 1.0
+
 # amp
 amp_enabled: false
 
-
-# eval
+# eval and save
 eval: true
 eval_interval: 1
-
-
 save_interval: 10
 output_dir: ./trainer_output/vit

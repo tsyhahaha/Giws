@@ -3,22 +3,23 @@ defaults:
 
 target: minst
 
+# custom
 gpu_id: 0
 seed: 42
 verbose: false
 
-clip_grad: true
-clip_mode: "norm"
-clip_grad_value: 1.0
-
+# training
 epochs: 3
 batch_size: 256
 lr: 1e-3
 
-# eval
+# gradient clip
+clip_grad: true
+clip_mode: "norm"
+clip_grad_value: 1.0
+
+# eval and save
 eval: true
-eval_interval: 1 # by epoch interval
-
-
-save_interval: 1 # by epoch interval
+eval_interval: 1
+save_interval: 1
 output_dir: ./trainer_output

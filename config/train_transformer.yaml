@@ -3,37 +3,39 @@ defaults:
 
 target: transformer
 
+# custom
 use_gpu: true
-gpu_list: [0,1]
+gpu_list: [0,1] # ddp mode
 seed: 42
 verbose: false
 
-
-# task specific
-max_len: 64
+# specific settings
+use_efficient_attn: true
 
 # training
-epochs: 500
+epochs: 100
 batch_size: 256
 lr: 1e-4
+data_path: /mnt/user/taosiyuan/projects/data/sample-submission-version/TM-training-set
+max_len: 64
+
+# optim 
+weight_decay: 1e-4
 lr_mul: 0.5
 warmup_steps: 2000
 label_smoothing: 0.1
-data_path: /mnt/user/taosiyuan/projects/data/sample-submission-version/TM-training-set
-# gradients
+
+# gradients clip
 clip_grad: true
 clip_mode: "norm"
 clip_grad_value: 1.0
+
 # amp
 amp_enabled: false
 
-# model specific
-use_efficient_attn: true
-
-# eval
+# eval and save
 eval: true
 eval_data_path: /mnt/user/taosiyuan/projects/data/sample-submission-version/Dev-set
 eval_interval: 5
-
-save_interval: 50
+save_interval: 100000
 output_dir: ./trainer_output/transformer
