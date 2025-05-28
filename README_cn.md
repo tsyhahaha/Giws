@@ -36,7 +36,7 @@ torchrun \
 bash run_train.py
 ```
 
-其中，若为单卡训练，设置 `--nproc_per_node=1` 即可；多为多卡训练（假设使用四张卡），则设为 `--nproc_per_node=4`，同时需要在 config 文件里设置：
+若为单卡训练，设置 `--nproc_per_node=1` 即可；多为多卡训练（假设使用四张卡），则设为 `--nproc_per_node=4`，同时需要在 config 文件里设置：
 
 ```yaml
 gpu_list: [0,1,2,3]

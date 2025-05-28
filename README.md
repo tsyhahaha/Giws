@@ -1,6 +1,8 @@
 # GIWS  
 **Give It a Whirl: Best Practices for PyTorch Training from Scratch**
 
+> 📘 This README is also available in [Chinese (简体中文)](README_cn.md).
+
 Welcome to the **GIW (Give It a Whirl)** repository! This is a PyTorch training template built on top of the **Hydra configuration system**, designed to provide beginners and researchers with a **clean, flexible, and extensible** project structure. The repository includes training implementations of various classic models and supports **both single-GPU and multi-GPU training**. The goals of this project are to:
 
 - Provide standard implementations of common PyTorch models as learning references
@@ -35,6 +37,13 @@ Then start training by running:
 ```sh
 bash run_train.sh
 ```
+
+For single-GPU training, simply set --nproc_per_node=1.For multi-GPU training (e.g., using 4 GPUs), set --nproc_per_node=4, and make sure to update the following in the config file accordingly:
+
+```yaml
+gpu_list: [0,1,2,3]
+```
+
 
 ### 2. Customize Your Own Model
 
