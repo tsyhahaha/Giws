@@ -1,19 +1,27 @@
-# GIW
-GIW（Give It a Whirl）- Give It a Whirl: Best practices for pytorch training from scratch.
+# GIWS
+**Give It a Whirl：从零开始的 PyTorch 训练最佳实践**
 
-项目中的所有模型、训练等配置基于**hydra**, 该工具能够方便的将各种配置参数储存为 `yaml` 文件，基本格式参考 `config/` 下的配置文件，高级用法请参考[hydra官方文档](https://hydra.cc/docs/intro/).
+欢迎来到 **GIW（Give It Whirls）** 仓库！这是一个基于 **Hydra 配置管理系统** 的 PyTorch 训练模板，旨在为初学者和研究者提供一个 **清晰、灵活、易扩展** 的项目结构。仓库中实现了多种经典模型的训练，并支持 **单卡和多卡训练**。这个项目的目标是：
+
+- 提供 PyTorch 常见模型的标准实现作为学习参考
+- 展示训练代码的规范组织方式与模块化设计
+- 结合 [Hydra](https://hydra.cc/docs/intro/)，实现简洁高效的配置管理与实验控制
+
+如果你正在学习 PyTorch，或想要一个可靠的训练框架作为起点，**那就 Give It a Whirl 吧！**
 
 ## 开始
 
-```
+```sh
 git@github.com:tsyhahaha/Giws.git
 cd Giws
 pip install -e .
 ```
 
-然后在 `config/xxx.yaml` 中，配置训练所需参数，将 `run_train.sh` 中的配置文件名改为对应文件名：
+#### 1.使用现有模型
 
-```
+在`config/xxx.yaml` 中配置训练所需参数，将 `run_train.sh` 中的配置文件名改为对应文件名：
+
+```sh
 torchrun \
     --nnodes=1 \
     --master-port 29505 \
@@ -24,9 +32,50 @@ torchrun \
 
 即可通过指定配置文件启动训练：
 
-```
+```sh
 bash run_train.py
 ```
+
+其中，若为单卡训练，设置 `--nproc_per_node=1` 即可；多为多卡训练（假设使用四张卡），则设为 `--nproc_per_node=4`，同时需要在 config 文件里设置：
+
+```yaml
+gpu_list: [0,1,2,3]
+```
+
+#### 2.自定义模型
+
+**Step1：模型实现**
+
+在 `giws/models/` 目录下新建 `xxx.py`，实现自定义模型。然后在 `giws/models/__init__.py` 中添加导入语句：
+
+```py
+from giws.models.xxx import xxx
+```
+
+**Step2：训练函数实现**
+
+在 `giws/trainer/` 目录下新建 `train_xxx.py`，实现对应的 `train()` 函数。参考现有的 trainer 文件，依次实现 `setup_model()`、`setup_dataset()` 等函数。若希望支持多卡数据并行训练，可参考 `train_transformer.py` 的实现。
+
+**Step3：添加配置函数**
+
+在 `giws/config/` 下新建 `train_xxx.yaml`，配置训练流程相关参数。在 `giws/config/model/` 下新建 `xxx.yaml`，配置模型初始化所需参数。
+
+**Step4：开始训练**
+
+在 `giws/train.py` 中引入自定义训练函数：
+
+```py
+from giws.trainer.train_xxx import train as train_func_xxx
+```
+
+并在主函数中添加分支：
+
+```py
+elif target == "xxx":
+    train_func_xxx(cfg)
+```
+
+最后，修改 `run_train.sh` 中的配置文件名，使用你新添加的配置，即可启动训练。
 
 ## 项目
 
