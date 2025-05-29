@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import torch.nn.functional as F
+import torch.distributed as dist
 from torch.utils.data import DataLoader
 from torch.utils.data.distributed import DistributedSampler
 from torch.amp import GradScaler, autocast
@@ -160,7 +161,7 @@ def test(model, validation_data, device, pad_idx=[0,0]):
     loss_per_word = total_loss/n_word_total
     accuracy = n_word_correct/n_word_total
     ppl = torch.exp(torch.tensor(loss_per_word))
-    return loss_per_word, accuracy, ppl.item()
+    return loss_per_word, ppl.item(), accuracy
 
 
 def train_func(args):
@@ -190,6 +191,7 @@ def train_func(args):
     # initialization
     best_indicator = 0 if extra_cfg is None else extra_cfg['best_indicator']
     save_checkpoint = get_save_func(args, model)
+    
     gradient_checker = GradientChecker(model, verbose=True, raise_on_nan=False)
     if device == 0:
         save_checkpoint(cur_step=0, cur_epoch=0, best_indicator=best_indicator)
@@ -223,11 +225,15 @@ def train_func(args):
                 dispatch_clip_grad(model.parameters(), max_grad_norm)
 
             # gradients checker
-            if not gradient_checker.check_gradients():
-                logger.warning(f"Skipping optimizer step {scheduled_optim.get_step()} due to invalid gradients")
+            grad_valid = gradient_checker.check_gradients()
+            grad_valid_tensor = torch.tensor(int(grad_valid), device=device)
+            dist.all_reduce(grad_valid_tensor, op=dist.ReduceOp.MIN)
+            if grad_valid_tensor.item() == 0:
+                logger.warning("Skipping step due to invalid gradient")
                 scheduled_optim.zero_grad()
                 continue
-            
+
+
             # gradients update
             scaler.step(scheduled_optim.get_optim())
             scaler.update()
@@ -249,10 +255,9 @@ def train_func(args):
         if (args.eval and epoch % args.eval_interval == 0) or epoch == args.epochs:
             if device == 0:
                 logger.info(f'Epoch [{epoch}/{args.epochs}] Beginning to test......')
-                val_loss, acc = test(model, test_dataloader, device)
-                perplexity = torch.exp(torch.tensor(val_loss)).item()
+                val_loss, ppl, acc = test(model, test_dataloader, device)
                 logger.info(f'Epoch [{epoch}/{args.epochs}] Test finished, '
-                            f'perplexity = {round(perplexity,4)}, '
+                            f'ppl = {round(ppl,4)}, '
                             f'test_loss = {round(val_loss, 4)}, '
                             f'acc = {round(acc, 3)}')
 
