@@ -14,8 +14,11 @@ import logging
 from functools import partial
 
 import giws.utils.ddp_utils as ddp_utils
+from giws.utils import get_save_func
 from giws.optim import (
     CustomScheduledOptim,
+    ConstantScheduledOptim,
+    build_scheduled_optim,
 )
 from giws.utils import(
     GradientChecker,
@@ -99,7 +102,7 @@ def setup_dataset(args):
     )
 
     # distributed sampler
-    sampler = DistributedSampler(train_dataset, shuffle=True, drop_last=True)
+    sampler = DistributedSampler(train_dataset, shuffle=True, drop_last=False)
     train_dataloader = DataLoader(
         train_dataset,
         batch_size=args.batch_size,
@@ -133,51 +136,31 @@ def setup_dataset(args):
                  test {len(test_dataset) if test_dataset else 0}')
     return train_dataloader, test_loader
 
-
+@torch.no_grad()
 def test(model, validation_data, device, pad_idx=[0,0]):
     ''' Epoch operation in evaluation phase '''
     model.eval()
     total_loss, n_word_total, n_word_correct = 0, 0, 0
 
-    with torch.no_grad():
-        for batch in validation_data:
-            # prepare data
-            src_seq = batch['src'].to(device)
-            trg_seq, gold = map(lambda x: x.to(device), patch_trg(batch['trg']))
+    for batch in validation_data:
+        # prepare data
+        src_seq = batch['src'].to(device)
+        trg_seq, gold = map(lambda x: x.to(device), patch_trg(batch['trg']))
 
-            # forward
-            pred = model(src_seq, trg_seq)
-            loss, n_correct, n_word = cal_performance(
-                pred, gold, pad_idx[1], smoothing=False)
+        # forward
+        pred = model(src_seq, trg_seq)
+        loss, n_correct, n_word = cal_performance(
+            pred, gold, pad_idx[1], smoothing=False)
 
-            # note keeping
-            n_word_total += n_word
-            n_word_correct += n_correct
-            total_loss += loss.item()
+        # note keeping
+        n_word_total += n_word
+        n_word_correct += n_correct
+        total_loss += loss.item()
 
-    loss_per_word = total_loss/n_word_total # log(perplexity)
+    loss_per_word = total_loss/n_word_total
     accuracy = n_word_correct/n_word_total
-    return loss_per_word, accuracy
-
-def get_save_func(args, model):
-    def save_checkpoint(args, model, cur_epoch, cur_step, best_indicator, best=False):
-        ckpt_dir = os.path.join(args.output_dir, 'checkpoints')
-        if not os.path.exists(ckpt_dir):
-            os.makedirs(ckpt_dir)
-        
-        save_info = dict(
-            model = model.state_dict(),
-            cfg=args.model,
-            train_steps=cur_step,
-            best_indicator=best_indicator
-        )
-        if not best:
-            ckpt_file = os.path.join(ckpt_dir, f'checkpoint_epoch_{cur_epoch}.ckpt')
-        else:
-            save_info['best_indicator'] = best_indicator
-            ckpt_file = os.path.join(ckpt_dir, f'best_checkpoint_epoch_{cur_epoch}.ckpt')
-        torch.save(save_info, ckpt_file)
-    return partial(save_checkpoint, args=args, model=model)
+    ppl = torch.exp(torch.tensor(loss_per_word))
+    return loss_per_word, accuracy, ppl.item()
 
 
 def train_func(args):
@@ -194,12 +177,13 @@ def train_func(args):
     amp_enabled = args.get("amp_enabled", False)
     scaler = GradScaler(enabled=amp_enabled)
     context = autocast('cuda') if amp_enabled  else nullcontext()
-    scheduled_optim = CustomScheduledOptim(
-        optim.AdamW(model.parameters(), betas=(0.9, 0.98), eps=1e-08, weight_decay=args.get('weight_decay', 0.0)), 
-        lr_mul=args.get('lr_mul', 1.),
-        d_model=args.model.embed_dim,
-        n_warmup_steps=args.warmup_steps
+    optimizer = optim.AdamW(model.parameters(), **args.optim)
+    scheduled_optim = build_scheduled_optim(
+        args.scheduler_type, 
+        optimizer, d_model = args.model.embed_dim,
+        **args.scheduler,
     )
+    
     max_grad_norm = args.get('clip_grad_value', 1.0)
     all_batch_length = len(train_dataloader)
 
@@ -267,11 +251,15 @@ def train_func(args):
                 logger.info(f'Epoch [{epoch}/{args.epochs}] Beginning to test......')
                 val_loss, acc = test(model, test_dataloader, device)
                 perplexity = torch.exp(torch.tensor(val_loss)).item()
-                logger.info(f'Epoch [{epoch}/{args.epochs}] Test finished, perplexity: {round(perplexity,4)}, loss: {round(val_loss, 4)}, acc: {round(acc, 3)}')
+                logger.info(f'Epoch [{epoch}/{args.epochs}] Test finished, '
+                            f'perplexity = {round(perplexity,4)}, '
+                            f'test_loss = {round(val_loss, 4)}, '
+                            f'acc = {round(acc, 3)}')
 
                 if acc > best_indicator:
                     best_indicator = acc
-                    save_checkpoint(cur_epoch=epoch, cur_step=scheduled_optim.get_step(), best_indicator=best_indicator, best=True)
+                    save_checkpoint(cur_epoch=epoch, cur_step=scheduled_optim.get_step(), 
+                                    best_indicator=best_indicator, best=True)
                     
             model.train()
 
