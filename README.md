@@ -84,6 +84,18 @@ elif target == "xxx":
 
 Finally, update the config file name in `run_train.sh` to match your custom config, and you’re ready to train.
 
+### 3. Plotting Curves
+
+To visualize training metrics such as loss and accuracy, you can use the `analysis/plot.py` script to generate trend curves. For example, to plot the training loss of the Transformer model, run:
+
+```sh
+python analysis/plot.py --model transformer --indicator loss
+```
+
+The script will automatically retrieve the latest training log, extract the loss values, and generate the corresponding plot, as shown below:
+
+![loss graph](assert/loss.jpg)
+
 ## Projects
 
 This repository includes implementations of the following projects:

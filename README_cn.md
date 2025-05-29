@@ -77,6 +77,18 @@ elif target == "xxx":
 
 最后，修改 `run_train.sh` 中的配置文件名，使用你新添加的配置，即可启动训练。
 
+#### 3.绘制图像
+
+对于训练过程中的指标（如 loss 和 accuracy），可以使用 `analysis/plot.py` 脚本绘制变化曲线。例如，若要绘制 Transformer 模型的训练损失曲线，可运行以下命令：
+
+```sh
+python analysis/plot.py --model transformer --indicator loss
+```
+
+脚本将自动读取最新的日志文件，提取训练损失数据并绘制图像，如下所示：
+
+![loss 曲线](assert/loss.jpg)
+
 ## 项目
 
 本仓库实现的项目包括：
