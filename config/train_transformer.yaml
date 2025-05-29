@@ -41,6 +41,6 @@ amp_enabled: false
 # eval and save
 eval: true
 eval_data_path: /mnt/user/taosiyuan/projects/data/sample-submission-version/Dev-set
-eval_interval: 5
+eval_interval: 2
 save_interval: 100000
 output_dir: ./trainer_output/transformer

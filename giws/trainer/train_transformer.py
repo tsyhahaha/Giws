@@ -253,18 +253,19 @@ def train_func(args):
         
         # eval by interval
         if (args.eval and epoch % args.eval_interval == 0) or epoch == args.epochs:
+            val_loss, ppl, acc = test(model, test_dataloader, device)
+            if acc > best_indicator:
+                best_indicator = acc
+                save_checkpoint(cur_epoch=epoch, cur_step=scheduled_optim.get_step(), 
+                                best_indicator=best_indicator, best=True)
             if device == 0:
                 logger.info(f'Epoch [{epoch}/{args.epochs}] Beginning to test......')
-                val_loss, ppl, acc = test(model, test_dataloader, device)
                 logger.info(f'Epoch [{epoch}/{args.epochs}] Test finished, '
                             f'ppl = {round(ppl,4)}, '
                             f'test_loss = {round(val_loss, 4)}, '
                             f'acc = {round(acc, 3)}')
 
-                if acc > best_indicator:
-                    best_indicator = acc
-                    save_checkpoint(cur_epoch=epoch, cur_step=scheduled_optim.get_step(), 
-                                    best_indicator=best_indicator, best=True)
+                
                     
             model.train()
 
