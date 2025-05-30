@@ -80,7 +80,7 @@ def extract_logs(root_path):
 def main(args):
     indicator = str(args.indicator).capitalize()
     root_folder = os.path.join(args.log_folder, args.model)
-    re_pattern = rf'{args.indicator}\s*{args.sep}\s*(-?\d+\.?\d*(?:[eE][-+]?\d+)?)%?'
+    re_pattern = rf'\b{args.indicator}\s*{args.sep}\s*(-?\d+\.?\d*(?:[eE][-+]?\d+)?)%?'
     ranks = args.ranks
     print(f"re_pattern: {re_pattern}")
     
