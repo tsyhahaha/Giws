@@ -11,20 +11,23 @@ seed: 42
 verbose: false
 
 # training
+model_path: /mnt/user/taosiyuan/projects/data/best_checkpoint_epoch_22.ckpt
+warm_start: false
 data_path: /mnt/user/taosiyuan/projects/data/simple-examples/data
 seq_len: 256
 epochs: 50
-batch_size: 16
-lr: 0.1
+batch_size: 512
+lr: 0.001
 
 # optim
 schedule_type: 'cosine'
 optim:
-  total_steps: 10000
-  min_lr: 1e-3
+  is_cycle: true
+  total_steps: 1000
+  min_lr: 5e-5
 
 # gradient clip
-clip_grad: true
+clip_grad: false
 clip_mode: "norm"
 clip_grad_value: 1.0
 

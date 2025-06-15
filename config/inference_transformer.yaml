@@ -1,0 +1,17 @@
+defaults:
+ - model: transformer
+
+target: transformer
+verbose: false
+use_gpu: true
+gpu_id: 0
+
+max_len: 80
+test_batch_size: 64
+
+data_path: /mnt/user/taosiyuan/projects/data/sample-submission-version/Dev-set
+vocab_path: /mnt/user/taosiyuan/projects/data/sample-submission-version/TM-training-set
+model_path: /mnt/user/taosiyuan/projects/Giws/trainer_output/transformer/20250615_153519/checkpoints
+
+output_dir: ./inference_output/
+

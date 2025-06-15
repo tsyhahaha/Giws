@@ -1,9 +1,9 @@
-src_vocab_size: 53713
-trg_vocab_size: 35029
+src_vocab_size: 88003
+trg_vocab_size: 88003
 src_pad_idx: 0
 trg_pad_idx: 0
-embed_dim: 512
-n_blocks: 6
+embed_dim: 256
+n_blocks: 3
 n_heads: 8
-ff_hid_dim: 2048
-dropout: 0.1
+ff_hid_dim: 1024
+dropout: 0.5

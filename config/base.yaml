@@ -3,7 +3,7 @@ defaults:
 
 target: minst
 
-# custom
+# general
 gpu_id: 0
 seed: 42
 verbose: false

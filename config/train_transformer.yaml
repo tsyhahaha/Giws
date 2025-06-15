@@ -13,13 +13,16 @@ verbose: false
 use_efficient_attn: true
 
 # training
+model_path: /mnt/user/taosiyuan/projects/data/checkpoint_epoch_300.ckpt
 epochs: 300
-batch_size: 256
+batch_size: 512
 lr: 1e-3
 data_path: /mnt/user/taosiyuan/projects/data/sample-submission-version/TM-training-set
-max_len: 64
+max_len: 80
+label_smoothing: 0.1
 
 # optim 
+optim_type: 'adamw'
 optim:
   betas: [0.9, 0.98]
   eps: 1e-8
@@ -28,19 +31,19 @@ optim:
 scheduler_type: 'custom'
 scheduler:
   lr_mul: 0.5
-  warmup_steps: 2000
+  warmup_steps: 10000
 
 # gradients clip
 clip_grad: true
 clip_mode: "norm"
-clip_grad_value: 1.0
+clip_grad_value: 5.0
 
 # amp
 amp_enabled: false
 
 # eval and save
-eval: true
+eval: false
 eval_data_path: /mnt/user/taosiyuan/projects/data/sample-submission-version/Dev-set
 eval_interval: 2
-save_interval: 100000
+save_interval: 10
 output_dir: ./trainer_output/transformer
