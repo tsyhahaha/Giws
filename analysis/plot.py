@@ -27,9 +27,10 @@ def parse():
         if ',' in value:
             return [int(x) for x in value.split(',')]
         else:
-            return [int(value)]  # 单个值转为单元素列表
+            return [int(value)]
     parser = argparse.ArgumentParser()
-    parser.add_argument("--log_folder", type=str, default="/mnt/user/taosiyuan/projects/Giws/trainer_output/")
+    parser.add_argument("--log_folder", type=str, default="/mnt/user/taosiyuan/projects/Giws/")
+    parser.add_argument("--mode", type=str, default="train", help="train/inference")
     parser.add_argument("--model", type=str, default="transformer", help="e.g., vit/lstm, etc.")
     parser.add_argument("--indicator", type=str, default="loss", help="The name of your target indicator you want to plot.")
     parser.add_argument("--sep", type=str, default="=", help="Sep char between the indicator and value. e.g., :, =.")
@@ -79,7 +80,8 @@ def extract_logs(root_path):
 
 def main(args):
     indicator = str(args.indicator).capitalize()
-    root_folder = os.path.join(args.log_folder, args.model)
+    mode = "trainer" if args.mode == 'train' else 'inference'
+    root_folder = os.path.join(args.log_folder, f'{mode}_output', args.model)
     re_pattern = rf'\b{args.indicator}\s*{args.sep}\s*(-?\d+\.?\d*(?:[eE][-+]?\d+)?)%?'
     ranks = args.ranks
     print(f"re_pattern: {re_pattern}")
@@ -111,7 +113,7 @@ def main(args):
 
     colors = ['blue', 'red', 'darkorange', 'purple', 'black', 'cyan', 'lime', 'gold']
     for ids, name in enumerate(target.keys()):
-        plt.plot([i for i in range(len(target[name]))], target[name], color=colors[ids], label=name)
+        plt.plot([i for i in range(len(target[name]))], target[name], color=colors[ids], label=name, marker='.')
 
     plt.legend(frameon=False, loc='upper right')
     plt.grid(linestyle='--')
