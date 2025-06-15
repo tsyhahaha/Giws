@@ -30,7 +30,7 @@ class CosineAnnealingScheduledOptim(BaseScheduledOptim):
         self.base_lrs = [group['lr'] for group in optimizer.param_groups]
 
     def _update_learning_rate(self):
-        if self.n_steps > self.total_steps and self.is_cycle:
+        if self.n_steps > self.total_steps and not self.is_cycle:
             return
         for i, param_group in enumerate(self._optimizer.param_groups):
             base_lr = self.base_lrs[i]
@@ -67,13 +67,18 @@ class CosineAnnealingWarmRestartsScheduledOptim(BaseScheduledOptim):
 
 
 class StepLRScheduledOptim(BaseScheduledOptim):
-    def __init__(self, optimizer, step_size, gamma=0.1):
+    def __init__(self, optimizer, step_size, gamma=0.1, epochs_no_decay=-1):
         super().__init__(optimizer)
         self.step_size = step_size
         self.gamma = gamma
+        self.epochs_no_decay = epochs_no_decay
 
     def _update_learning_rate(self):
-        if self.n_steps % self.step_size == 0:
+        if self.step_size == -1:
+            if self.epoch >= self.epochs_no_decay-2:
+                for param_group in self._optimizer.param_groups:
+                    param_group['lr'] *= self.gamma
+        elif self.n_steps % self.step_size == 0:
             for param_group in self._optimizer.param_groups:
                 param_group['lr'] *= self.gamma
 

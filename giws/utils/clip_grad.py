@@ -6,7 +6,7 @@ def dispatch_clip_grad(parameters, value: float, mode: str = 'norm', norm_type: 
     Args:
         parameters (Iterable): model parameters to clip
         value (float): clipping value/factor/norm, mode dependant
-        mode (str): clipping mode, one of 'norm', 'value', 'agc'
+        mode (str): clipping mode, one of 'norm', 'value'
         norm_type (float): p-norm, default 2.0
     """
     if mode == 'norm':

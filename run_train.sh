@@ -1,6 +1,6 @@
 torchrun \
     --nnodes=1 \
-    --master-port 29503 \
-    --nproc_per_node=1 \
+    --master-port 29506 \
+    --nproc_per_node=2 \
     ./train.py \
-    --config-name train_vit
+    --config-name train_transformer

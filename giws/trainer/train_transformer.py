@@ -39,6 +39,7 @@ def cal_performance(pred, gold, trg_pad_idx, smoothing=False):
                     pred,
                     gold,
                     ignore_index=trg_pad_idx,
+                    reduction='sum',
                     label_smoothing=0.1 if smoothing else 0.0,
                 )
     
@@ -60,7 +61,7 @@ def setup_model(args):
     
     extra_cfg = None
     if args.get('model_path', None) is not None:
-        save_info = torch.load('args.model_path', map_location='cpu')
+        save_info = torch.load(args.model_path, map_location='cpu', weights_only=False)
         model = Transformer(
             **save_info['cfg'],
             max_length=args.max_len,
@@ -81,7 +82,7 @@ def setup_model(args):
     model.to(device)
     logger.info(model)
     logger.info('Model setup finish')
-    return model, extra_cfg
+    return model.train(), extra_cfg
 
 def collate_fn(batch):
     processed_batch = {}
@@ -97,8 +98,8 @@ def setup_dataset(args):
     train_dataset = TranslationDataset(
         chinese_file=os.path.join(args.data_path, 'chinese.txt'),
         english_file=os.path.join(args.data_path, 'english.txt'),
-        chinese_vocab_file=os.path.join(args.data_path, 'chinese_vocab.json'),
-        english_vocab_file=os.path.join(args.data_path, 'english_vocab.json'),
+        chinese_vocab_file=os.path.join(args.data_path, 'vocab.json'),
+        english_vocab_file=os.path.join(args.data_path, 'vocab.json'),
         max_len=args.max_len,
     )
 
@@ -114,12 +115,12 @@ def setup_dataset(args):
         shuffle=False,
     )
 
-    if args.eval and ddp_utils.get_local_rank() == 0:
+    if args.eval:
         test_dataset = TranslationDataset(
             chinese_file=os.path.join(args.eval_data_path, 'cn.txt'),
             english_file=os.path.join(args.eval_data_path, 'en.txt'),
-            chinese_vocab_file=os.path.join(args.data_path, 'chinese_vocab.json'),
-            english_vocab_file=os.path.join(args.data_path, 'english_vocab.json'),
+            chinese_vocab_file=os.path.join(args.data_path, 'vocab.json'),
+            english_vocab_file=os.path.join(args.data_path, 'vocab.json'),
             max_len=args.max_len,
         )
         test_loader = DataLoader(
@@ -168,6 +169,7 @@ def train_func(args):
     # model setup
     device = ddp_utils.get_device(args.gpu_list) if args.use_gpu else 'cpu'
     model, extra_cfg = setup_model(args)    # extra_cfg: cfg for warm start
+    extra_cfg = None if not args.get('warm_start', False) else extra_cfg
     model.train()
 
     # dataset setup
@@ -220,6 +222,7 @@ def train_func(args):
             scaler.scale(loss).backward()
 
             # gradients clip
+            real_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1e9, norm_type=2)
             if args.get("clip_grad", False):
                 scaler.unscale_(scheduled_optim.get_optim())
                 dispatch_clip_grad(model.parameters(), max_grad_norm)
@@ -229,7 +232,7 @@ def train_func(args):
             grad_valid_tensor = torch.tensor(int(grad_valid), device=device)
             dist.all_reduce(grad_valid_tensor, op=dist.ReduceOp.MIN)
             if grad_valid_tensor.item() == 0:
-                logger.warning("Skipping step due to invalid gradient")
+                logger.info(f"Skipping step {scheduled_optim.get_step()} due to invalid gradient")
                 scheduled_optim.zero_grad()
                 continue
 
@@ -242,7 +245,8 @@ def train_func(args):
             # logger information
             logger.info(f'optim step = {scheduled_optim.get_step()} '
                         f'lr = {scheduled_optim.get_lr()} '
-                        f'loss = {round(loss.item(), 4)}')
+                        f'loss = {round(loss.item(), 4)} '
+                        f'uncliped_grad_norm = {real_norm}')
             logger.info(f'Epoch [{epoch}/{args.epochs}] '
                         f'Batch [{batch+1}/{all_batch_length}] '
                         f'time {round(batch_end_time - batch_start_time, 4)} s.')
@@ -252,21 +256,19 @@ def train_func(args):
             save_checkpoint(cur_epoch=epoch, cur_step=scheduled_optim.get_step(), best_indicator=best_indicator)
         
         # eval by interval
-        if (args.eval and epoch % args.eval_interval == 0) or epoch == args.epochs:
+        if args.eval and (epoch % args.eval_interval == 0 or epoch == args.epochs):
             val_loss, ppl, acc = test(model, test_dataloader, device)
-            if acc > best_indicator:
+            logger.info(f'Epoch [{epoch}/{args.epochs}] Beginning to test......')
+            logger.info(f'Epoch [{epoch}/{args.epochs}] Test finished, '
+                        f'ppl = {round(ppl,4)}, '
+                        f'test_loss = {round(val_loss, 4)}, '
+                        f'acc = {round(acc, 3)}')
+            
+            if acc > best_indicator and device == 0:
                 best_indicator = acc
                 save_checkpoint(cur_epoch=epoch, cur_step=scheduled_optim.get_step(), 
                                 best_indicator=best_indicator, best=True)
-            if device == 0:
-                logger.info(f'Epoch [{epoch}/{args.epochs}] Beginning to test......')
-                logger.info(f'Epoch [{epoch}/{args.epochs}] Test finished, '
-                            f'ppl = {round(ppl,4)}, '
-                            f'test_loss = {round(val_loss, 4)}, '
-                            f'acc = {round(acc, 3)}')
-
-                
-                    
+            
             model.train()
 
         

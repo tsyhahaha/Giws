@@ -5,9 +5,10 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 from datetime import datetime
 
-import torch
-
-from giws.inferer import inference_func_lstm
+from giws.inferer import (
+    inference_func_lstm,
+    inference_func_transformer
+)
 
 logger = None
 
@@ -22,8 +23,9 @@ class WorkerLogFilter(logging.Filter):
         return True
 
 def setup(cfg):
+    target = cfg.get('target', None)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    cfg.output_dir = os.path.join(cfg.output_dir, timestamp)
+    cfg.output_dir = os.path.join(cfg.output_dir, target, timestamp)
     os.makedirs(os.path.abspath(os.path.join(cfg.output_dir, 'checkpoints')), exist_ok=True)
     os.makedirs(os.path.abspath(os.path.join(cfg.output_dir, 'logs')), exist_ok=True)
 
@@ -72,6 +74,8 @@ def main(cfg : DictConfig):
     target = cfg.get('target', None)
     if target == "lstm":
         inference_func_lstm(cfg)
+    elif target == "transformer":
+        inference_func_transformer(cfg)
     else:
         raise NotImplementedError(f'train mode {target} not implemented')
     

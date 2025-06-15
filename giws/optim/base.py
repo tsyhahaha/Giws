@@ -5,6 +5,7 @@ class BaseScheduledOptim(ABC):
     def __init__(self, optimizer):
         self._optimizer = optimizer
         self.n_steps = 0
+        self.epoch = 0
 
     def step(self):
         self.n_steps += 1
@@ -14,6 +15,9 @@ class BaseScheduledOptim(ABC):
     def zero_grad(self):
         self._optimizer.zero_grad()
 
+    def set_epoch(self, epoch):
+        self.epoch = epoch
+
     def get_lr(self):
         return self._optimizer.param_groups[0]['lr']
 
@@ -22,6 +26,9 @@ class BaseScheduledOptim(ABC):
 
     def get_optim(self):
         return self._optimizer
+
+    def get_epoch(self):
+        return self.epoch
 
     @abstractmethod
     def _update_learning_rate(self):

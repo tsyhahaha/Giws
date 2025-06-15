@@ -21,11 +21,24 @@ from giws.utils import (
 logger = logging.getLogger(__name__)
 
 def setup_model(args):
-    model = PTBModel(**args.model)
+    extra_cfg = None
+    if args.get('model_path', None) is not None:
+        save_info = torch.load(args.model_path, map_location='cpu', weights_only=False)
+        model = PTBModel(
+            **save_info['cfg'],
+        )
+        model.load_state_dict(save_info["model"])
+        extra_cfg = dict(
+            cur_step = save_info['train_steps'],
+            best_indicator = save_info['best_indicator'],
+        )
+    else:
+        model = PTBModel(**args.model)
+
     model.to(args.gpu_id)
     logger.info(model)
     logger.info('Model setup finish')
-    return model.train()
+    return model.train(), extra_cfg
 
 def setup_dataset(args):
     data_path = args.get("data_path", None)
@@ -75,7 +88,7 @@ def test(model, device, test_dataloader):
 
 def train_func(args):
     device = args.gpu_id
-    model = setup_model(args)
+    model, extra_config = setup_model(args)
     train_dataloader, test_dataloader, word2idx, idx2word = setup_dataset(args)
 
     # loss and optimizer
@@ -85,12 +98,13 @@ def train_func(args):
     all_batch_length = len(train_dataloader) 
 
     # initial vars
-    best_indicator = 0
+    best_indicator = 1e9
     save_checkpoint = get_save_func(args, model)
     if device == 0:
-        save_checkpoint(cur_step=0, cur_epoch=0, best_indicator=best_indicator)
+        save_checkpoint(cur_step=0, cur_epoch=0, best_indicator=best_indicator, best=False)
 
     for epoch in range(1, args.epochs+1):
+        scheduled_optim.set_epoch(epoch)
         for batch, (input_ids, label) in enumerate(train_dataloader):
             scheduled_optim.zero_grad()
             batch_start_time = time.time()
@@ -103,6 +117,7 @@ def train_func(args):
             loss.backward()
             
             # gradients clip
+            real_norm = torch.nn.utils.clip_grad_norm_(model.parameters(), 1e9, norm_type=2)
             if args.get("clip_grad", False):
                 dispatch_clip_grad(model.parameters(), value=max_grad_norm, mode=args.clip_mode)
 
@@ -111,13 +126,14 @@ def train_func(args):
             batch_end_time = time.time()
             logger.info(f'optim step = {scheduled_optim.get_step()} '
                         f'loss = {round(loss.item(), 4)} '
-                        f'lr = {scheduled_optim.get_lr()}')
+                        f'lr = {scheduled_optim.get_lr()} '
+                        f'uncliped_grad_norm = {real_norm}')
             logger.info(f'Epoch [{epoch}/{args.epochs}] Batch [{batch+1}/{all_batch_length}] time {round(batch_end_time - batch_start_time, 4)} s.')
 
         # save checkpoints
         if epoch % args.save_interval == 0 or epoch == args.epochs:
             save_checkpoint(cur_step=scheduled_optim.get_step(),
-                            cur_epoch=epoch, best_indicator=best_indicator)
+                            cur_epoch=epoch, best_indicator=best_indicator, best=False)
         # eval by epoch interval
         if args.eval and (epoch % args.eval_interval == 0 and \
                 test_dataloader is not None \
